@@ -7,11 +7,14 @@ import { motion, AnimatePresence } from "framer-motion";
 import { isAuthenticated, logout, getUser } from "@/lib/auth";
 import Logo from "@/components/ui/Logo";
 
-const NAV_LINKS = [
+const AUTH_NAV_LINKS = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/hospitals", label: "Hospitals" },
   { href: "/agent", label: "AI Agent" },
   { href: "/system", label: "System" },
+];
+
+const PUBLIC_NAV_LINKS = [
   { href: "/about", label: "About" },
   { href: "/contact", label: "Contact" },
 ];
@@ -21,7 +24,7 @@ export default function Navbar() {
   const router = useRouter();
   const [scrolled, setScrolled] = useState(false);
   const [authed, setAuthed] = useState(false);
-  const [user, setUser] = useState<{ email: string; name?: string } | null>(null);
+  const [user, setUser] = useState<{ email: string; name?: string; role?: string } | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
@@ -46,6 +49,8 @@ export default function Navbar() {
     ? user.name.split(" ").map((w) => w[0]).join("").toUpperCase().slice(0, 2)
     : user?.email?.[0]?.toUpperCase() || "U";
 
+  const activeLinks = authed ? AUTH_NAV_LINKS : PUBLIC_NAV_LINKS;
+
   return (
     <>
       <motion.header
@@ -64,13 +69,13 @@ export default function Navbar() {
 
           {/* Center: Nav links (desktop) */}
           <div className="hidden lg:flex items-center gap-1">
-            {NAV_LINKS.map((link) => {
+            {activeLinks.map((link) => {
               const active = pathname === link.href;
               return (
                 <Link
                   key={link.href}
                   href={link.href}
-                  className={`relative px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
+                  className={`relative px-3.5 py-2 text-sm font-medium rounded-lg transition-colors ${
                     active
                       ? "text-cyan"
                       : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
@@ -87,6 +92,25 @@ export default function Navbar() {
                 </Link>
               );
             })}
+            {authed && (user as any)?.role === "admin" && (
+              <Link
+                href="/admin"
+                className={`relative px-3.5 py-2 text-sm font-medium rounded-lg transition-colors ${
+                  pathname === "/admin"
+                    ? "text-amber-400 font-semibold"
+                    : "text-amber-400/80 hover:text-amber-300 hover:bg-white/5"
+                }`}
+              >
+                Admin Center
+                {pathname === "/admin" && (
+                  <motion.div
+                    layoutId="nav-indicator"
+                    className="absolute inset-x-1 -bottom-[1px] h-0.5 bg-amber-400 rounded-full"
+                    transition={{ type: "spring", bounce: 0.15, duration: 0.5 }}
+                  />
+                )}
+              </Link>
+            )}
           </div>
 
           {/* Right: Auth */}
@@ -152,7 +176,7 @@ export default function Navbar() {
             className="fixed inset-x-0 top-16 z-40 glass border-b border-white/5 lg:hidden"
           >
             <div className="px-4 py-4 space-y-1">
-              {NAV_LINKS.map((link) => (
+              {activeLinks.map((link) => (
                 <Link
                   key={link.href}
                   href={link.href}
@@ -166,6 +190,19 @@ export default function Navbar() {
                   {link.label}
                 </Link>
               ))}
+              {authed && (user as any)?.role === "admin" && (
+                <Link
+                  href="/admin"
+                  onClick={() => setMobileOpen(false)}
+                  className={`block px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors ${
+                    pathname === "/admin"
+                      ? "text-amber-400 bg-amber-400/10"
+                      : "text-amber-400/80 hover:text-amber-300 hover:bg-white/5"
+                  }`}
+                >
+                  Admin Center
+                </Link>
+              )}
               <div className="pt-3 border-t border-white/5">
                 {authed ? (
                   <button

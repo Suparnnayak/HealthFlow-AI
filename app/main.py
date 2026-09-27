@@ -11,12 +11,14 @@ Production FastAPI application.
 """
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Request, Depends, Query
+from fastapi import FastAPI, HTTPException, Request, Depends, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, validator
 from typing import Optional, List, Any
 import os
 import time
+import threading
+import uuid as _uuid
 from pathlib import Path
 from datetime import datetime, date, timedelta
 from collections import defaultdict
@@ -27,7 +29,7 @@ from sqlalchemy import desc, func, text
 # ---------- lightweight internal imports (no ML libraries) ----------
 from forecast_system.utils import get_logger
 from database.session import get_db
-from database import crud
+import database.crud as crud
 from database.models import (
     User,
     Hospital,
@@ -35,19 +37,20 @@ from database.models import (
     ForecastRun,
     AdmissionHistory,
     ExternalSignal,
+    AccessLog,
+    UserHospitalAccess,
 )
 from app.auth.router import router as auth_router
 from app.agent.router import router as agent_router
-from app.dependencies import get_current_user, require_admin
+from app.dependencies import get_current_user, require_admin, require_hospital_access
+from app.core.access_logger import log_access
 from app.services.external_data_service import (
     fetch_and_store_external_signals,
     get_latest_external_signals_by_hospital,
 )
 
-# NOTE: ModelBundle is imported lazily inside _load_model_bundle() so that
-# the heavy ML stack (joblib, pandas, numpy, lightgbm, scikit-learn) is
-# NOT required for the Vercel serverless deployment — where the API only
-# serves pre-computed forecasts from the database.
+# NOTE: ModelBundleV2 is imported lazily inside _load_model_bundle() so that
+# the heavy ML stack is not required for cold serverless starts.
 
 logger = get_logger(__name__)
 
@@ -55,53 +58,55 @@ logger = get_logger(__name__)
 # Module-level state — initialised once per cold start (Vercel or local)
 # ---------------------------------------------------------------------------
 MODEL_PATH = os.getenv(
-    "MODEL_PATH", "models/forecast_system/lightgbm_final.pkl"
+    "MODEL_PATH", "models/forecast_system/model_bundle_v2.pkl"
 )
 
-bundle: Any = None                    # Optional[ModelBundle] when ML libs are present
+bundle: Any = None                    # Optional[ModelBundleV2] when ML libs are present
 model_loaded_at: Optional[str] = None
 model_path_used: Optional[str] = None
+model_version_str: str = "2.0.0"
 
 
 def _load_model_bundle() -> None:
     """
     Load the model bundle from disk (called once at cold start).
-
-    This is fully optional.  If the ML libraries (joblib, lightgbm,
-    scikit-learn …) are not installed — e.g. in Vercel serverless —
-    the function logs a warning and returns.  All forecast endpoints
-    serve pre-computed DB data and never touch the model.
+    Tries ModelBundleV2 first, falling back to legacy ModelBundle if needed.
     """
-    global bundle, model_loaded_at, model_path_used
-
-    try:
-        from forecast_system.model_bundle import ModelBundle
-    except ImportError as exc:
-        logger.info(
-            f"[SKIP] ML libraries not installed ({exc}) — "
-            "model loading skipped.  All forecast endpoints still work "
-            "(pre-computed data from DB)."
-        )
-        return
+    global bundle, model_loaded_at, model_path_used, model_version_str
 
     project_root = Path(__file__).resolve().parent.parent
 
     candidate_paths = [
         Path(MODEL_PATH),                     # explicit / absolute
         project_root / MODEL_PATH,            # relative to project root
+        project_root / "models" / "forecast_system" / "model_bundle_v2.pkl",
+        project_root / "models" / "forecast_system" / "lightgbm_final.pkl",
     ]
 
     for path in candidate_paths:
         path_str = str(path)
         if os.path.exists(path_str):
+            # Try V2 bundle first
             try:
-                bundle = ModelBundle.load(path_str)
+                from forecast_system.model_bundle_v2 import ModelBundleV2
+                bundle = ModelBundleV2.load(path_str)
                 model_path_used = path_str
-                model_loaded_at = datetime.now().isoformat()
-                logger.info(f"[OK] Model loaded from: {path_str}")
-            except Exception as load_exc:
-                logger.warning(f"[WARN] Model load failed: {load_exc}")
-            return
+                model_loaded_at = bundle.metadata.get("trained_at", datetime.now().isoformat())
+                model_version_str = bundle.metadata.get("version", "2.0.0")
+                logger.info(f"[OK] ModelBundleV2 loaded from: {path_str} (version {model_version_str})")
+                return
+            except Exception as e_v2:
+                # Try V1 bundle fallback
+                try:
+                    from forecast_system.model_bundle import ModelBundle
+                    bundle = ModelBundle.load(path_str)
+                    model_path_used = path_str
+                    model_loaded_at = datetime.now().isoformat()
+                    model_version_str = "1.0.0"
+                    logger.info(f"[OK] ModelBundle V1 loaded from: {path_str}")
+                    return
+                except Exception as e_v1:
+                    logger.warning(f"[WARN] Failed loading {path_str}: V2 error ({e_v2}), V1 error ({e_v1})")
 
     logger.warning("[WARN] Model bundle not found — /model-info will be unavailable")
 
@@ -228,7 +233,10 @@ class ForecastRequest(BaseModel):
         None, description="List of hospital IDs to forecast"
     )
     horizons: Optional[List[int]] = Field(
-        [1, 2, 3, 4, 5, 6, 7], description="Forecast horizons in days"
+        [1, 2, 3, 4], description="Forecast horizons in weeks (1-4)"
+    )
+    target: Optional[str] = Field(
+        None, description="Target: 'admissions' | 'inpatient_beds_used' (returns both if None)"
     )
 
     @validator("hospital_ids")
@@ -249,8 +257,8 @@ class ForecastRequest(BaseModel):
         for h in v:
             if h < 1:
                 raise ValueError(f"horizon must be >= 1, got {h}")
-            if h > 7:
-                raise ValueError(f"horizon must be <= 7, got {h}")
+            if h > 4:
+                raise ValueError(f"horizon must be <= 4 weeks, got {h}")
         return sorted(v)
 
 
@@ -281,10 +289,13 @@ class SystemStatusResponse(BaseModel):
 
 class ExternalSignalsTaskResponse(BaseModel):
     status: str
+    job_id: Optional[str] = None
     hospitals_total: int
-    processed: int
-    failed: int
-    upserted: int
+    message: Optional[str] = None
+    # synchronous-mode fields (kept for backward compat, None in async mode)
+    processed: Optional[int] = None
+    failed: Optional[int] = None
+    upserted: Optional[int] = None
 
 
 # ============================================================================
@@ -337,10 +348,126 @@ def health_check(db: Session = Depends(get_db)):
 
 
 @app.get("/hospitals")
-def list_hospitals(db: Session = Depends(get_db)):
-    """List all available hospitals from database."""
-    hospital_ids = crud.get_all_hospital_ids(db)
-    return {"hospitals": hospital_ids, "count": len(hospital_ids)}
+def list_hospitals(
+    db: Session = Depends(get_db),
+    user_claims: tuple = Depends(require_hospital_access),
+):
+    """
+    List available hospitals.
+    - Admins see all hospitals.
+    - Staff see only their assigned hospital CCNs.
+    Returns both 'hospitals' (list of IDs) for backward compatibility
+    and 'items' with full metadata (name, region, capacity, etc.).
+    """
+    current_user, scoped_ids = user_claims
+    if current_user.role == "admin":
+        hosp_records = db.query(Hospital).order_by(Hospital.hospital_id).all()
+    else:
+        hosp_records = (
+            db.query(Hospital)
+            .filter(Hospital.hospital_id.in_(scoped_ids or []))
+            .order_by(Hospital.hospital_id)
+            .all()
+        )
+
+    items = [
+        {
+            "hospital_id": h.hospital_id,
+            "name": h.name or f"Hospital {h.hospital_id}",
+            "region": h.region or "Unknown",
+            "capacity": h.capacity or 200,
+            "icu_capacity": h.icu_capacity or 20,
+        }
+        for h in hosp_records
+    ]
+    hospital_ids = [h["hospital_id"] for h in items]
+
+    return {
+        "hospitals": hospital_ids,
+        "items": items,
+        "count": len(items),
+    }
+
+
+@app.get("/hospitals/public")
+def list_public_hospitals(
+    db: Session = Depends(get_db),
+    limit: int = Query(500, ge=1, le=2000),
+):
+    """
+    Public lightweight endpoint returning available hospital IDs and details
+    for registration dropdowns and facility selectors.
+    """
+    from database.models import Hospital
+    rows = (
+        db.query(Hospital.hospital_id, Hospital.name, Hospital.region, Hospital.capacity)
+        .order_by(Hospital.hospital_id)
+        .limit(limit)
+        .all()
+    )
+    return {
+        "hospitals": [
+            {
+                "hospital_id": r.hospital_id,
+                "name": r.name or f"Hospital {r.hospital_id}",
+                "region": r.region or "Unknown",
+                "capacity": r.capacity or 200,
+            }
+            for r in rows
+        ],
+        "count": len(rows),
+    }
+
+
+class HospitalCreateRequest(BaseModel):
+    hospital_id: str
+    name: Optional[str] = None
+    region: Optional[str] = None
+    capacity: Optional[int] = 200
+    icu_capacity: Optional[int] = 20
+    population: Optional[int] = 50000
+
+
+@app.post("/admin/hospitals", status_code=status.HTTP_201_CREATED)
+def create_hospital(
+    payload: HospitalCreateRequest,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(require_admin),
+):
+    """
+    Admin-only endpoint to add a new hospital into the database.
+    """
+    from database.models import Hospital
+
+    existing = db.query(Hospital).filter(Hospital.hospital_id == payload.hospital_id.strip()).first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Hospital ID '{payload.hospital_id}' already exists",
+        )
+
+    new_hosp = Hospital(
+        hospital_id=payload.hospital_id.strip(),
+        name=payload.name.strip() if payload.name else f"Hospital {payload.hospital_id.strip()}",
+        region=payload.region.strip() if payload.region else "General",
+        capacity=payload.capacity if payload.capacity and payload.capacity > 0 else 200,
+        icu_capacity=payload.icu_capacity if payload.icu_capacity and payload.icu_capacity >= 0 else 20,
+        population=payload.population or 50000,
+    )
+    db.add(new_hosp)
+    db.commit()
+    db.refresh(new_hosp)
+
+    return {
+        "status": "created",
+        "hospital": {
+            "hospital_id": new_hosp.hospital_id,
+            "name": new_hosp.name,
+            "region": new_hosp.region,
+            "capacity": new_hosp.capacity,
+            "icu_capacity": new_hosp.icu_capacity,
+        },
+    }
 
 
 # ============================================================================
@@ -351,28 +478,40 @@ def list_hospitals(db: Session = Depends(get_db)):
 @app.get("/forecast/latest")
 def forecast_latest(
     hospitals: Optional[str] = Query(
-        None, description="Comma-separated hospital IDs (e.g. HOSP_1,HOSP_2)"
+        None, description="Comma-separated hospital IDs"
+    ),
+    target: Optional[str] = Query(
+        None, description="Filter target: 'admissions' | 'inpatient_beds_used'"
     ),
     db: Session = Depends(get_db),
+    auth_data: tuple = Depends(require_hospital_access),
 ):
     """
     GET /forecast/latest — returns precomputed forecasts from the latest run.
+    Hospital-scoped: hospital_staff can only view assigned hospitals.
     """
+    current_user, allowed_hospital_ids = auth_data
+
+    # Log access
+    log_access(
+        user_id=str(current_user.id),
+        hospital_id=",".join(allowed_hospital_ids) if allowed_hospital_ids else "ALL",
+        endpoint="/forecast/latest",
+        query_params={"hospitals": hospitals, "target": target},
+    )
+
     latest_run = crud.get_latest_forecast_run(db)
     if not latest_run:
         raise HTTPException(
             status_code=404,
-            detail="No forecast runs found. Run daily_forecast_job first.",
+            detail="No forecast runs found. Run weekly_forecast_job first.",
         )
-
-    hospital_ids = None
-    if hospitals:
-        hospital_ids = [h.strip() for h in hospitals.split(",") if h.strip()]
 
     forecasts = crud.get_precomputed_forecasts(
         db=db,
         run_id=latest_run.id,
-        hospital_ids=hospital_ids,
+        hospital_ids=allowed_hospital_ids,
+        target=target,
     )
 
     return {
@@ -390,18 +529,26 @@ def forecast_history(
     hospitals: Optional[str] = Query(
         None, description="Comma-separated hospital IDs"
     ),
-    days: int = Query(30, ge=1, le=365, description="Number of days of history"),
+    days: int = Query(60, ge=1, le=730, description="Number of days/weeks of history"),
     db: Session = Depends(get_db),
+    auth_data: tuple = Depends(require_hospital_access),
 ):
     """
     GET /forecast/history — returns admission history from the database.
+    Hospital-scoped: hospital_staff can only view assigned hospitals.
     """
-    hospital_ids = None
-    if hospitals:
-        hospital_ids = [h.strip() for h in hospitals.split(",") if h.strip()]
+    current_user, allowed_hospital_ids = auth_data
+
+    # Log access
+    log_access(
+        user_id=str(current_user.id),
+        hospital_id=",".join(allowed_hospital_ids) if allowed_hospital_ids else "ALL",
+        endpoint="/forecast/history",
+        query_params={"hospitals": hospitals, "days": days},
+    )
 
     history = crud.get_admission_history_for_hospitals(
-        db=db, hospital_ids=hospital_ids, days=days
+        db=db, hospital_ids=allowed_hospital_ids, days=days
     )
 
     return {"history": history, "count": len(history), "days": days}
@@ -445,40 +592,48 @@ def predict(
     request: ForecastRequest,
     rate_limit: bool = Depends(check_rate_limit),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    auth_data: tuple = Depends(require_hospital_access),
 ):
     """
-    POST /predict — Returns precomputed forecasts (backward-compatible).
-
-    No live inference. Data comes from the latest forecast run in the DB.
+    POST /predict — Returns precomputed forecasts with hospital scoping.
     """
     start_time = time.time()
+    current_user, allowed_hospital_ids = auth_data
+
+    # Log access
+    log_access(
+        user_id=str(current_user.id),
+        hospital_id=",".join(allowed_hospital_ids) if allowed_hospital_ids else "ALL",
+        endpoint="/predict",
+        query_params={"hospital_ids": request.hospital_ids, "horizons": request.horizons, "target": request.target},
+    )
 
     # Get latest forecast run
     latest_run = crud.get_latest_forecast_run(db)
     if not latest_run:
         raise HTTPException(
             status_code=503,
-            detail="No precomputed forecasts available. Waiting for daily forecast job.",
+            detail="No precomputed forecasts available. Waiting for forecast job.",
         )
 
-    # Validate hospital_ids against DB
     available_hospitals = set(crud.get_all_hospital_ids(db))
     if not available_hospitals:
         raise HTTPException(status_code=503, detail="No hospitals in database")
 
-    requested_hospital_ids = request.hospital_ids
-    if requested_hospital_ids:
-        unknown = set(requested_hospital_ids) - available_hospitals
-        if unknown:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unknown hospital_ids: {sorted(unknown)}. Available: {sorted(available_hospitals)}",
-            )
+    # If staff, ensure requested hospitals are subset of allowed
+    if request.hospital_ids:
+        if current_user.role != "admin":
+            unauthorized = set(request.hospital_ids) - set(allowed_hospital_ids)
+            if unauthorized:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Access denied to hospitals: {sorted(unauthorized)}",
+                )
+        requested_hospital_ids = request.hospital_ids
     else:
-        requested_hospital_ids = sorted(available_hospitals)
+        requested_hospital_ids = allowed_hospital_ids if current_user.role != "admin" else sorted(available_hospitals)
 
-    horizons = sorted(request.horizons) if request.horizons else [1, 2, 3, 4, 5, 6, 7]
+    horizons = sorted(request.horizons) if request.horizons else [1, 2, 3, 4]
 
     # Fetch precomputed forecasts
     forecasts = crud.get_precomputed_forecasts(
@@ -486,9 +641,20 @@ def predict(
         run_id=latest_run.id,
         hospital_ids=requested_hospital_ids,
         horizons=horizons,
+        target=request.target,
     )
 
     elapsed = time.time() - start_time
+
+    # Identify hospitals that returned zero forecast rows (admin-added, not in training set)
+    hospitals_with_data = {f["hospital_id"] for f in forecasts}
+    hospitals_without_forecasts = [h for h in requested_hospital_ids if h not in hospitals_with_data]
+
+    if hospitals_without_forecasts:
+        logger.warning(
+            f"No forecast data found for hospitals: {hospitals_without_forecasts}. "
+            "These hospitals may have been added after the last model training run."
+        )
 
     logger.info(
         f"Predict (precomputed) | hospitals={len(requested_hospital_ids)} | "
@@ -505,6 +671,7 @@ def predict(
             "inference_time_seconds": round(elapsed, 3),
             "forecast_run_id": str(latest_run.id),
             "source": "precomputed",
+            "hospitals_without_forecasts": hospitals_without_forecasts,
         },
     }
 
@@ -520,18 +687,58 @@ def predict(
     dependencies=[Depends(require_admin)],
 )
 def model_info():
-    """Get model information."""
+    """Get model information (Admin-only)."""
     if bundle is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
 
+    feat_cols = getattr(bundle, "feature_columns", [])
     return ModelInfoResponse(
-        version="1.0.0",
+        version=model_version_str,
         trained_at=model_loaded_at,
-        feature_count=len(bundle.feature_columns),
-        feature_columns=bundle.feature_columns,
+        feature_count=len(feat_cols),
+        feature_columns=feat_cols,
         path=model_path_used,
         git_commit=get_git_commit(),
     )
+
+
+# ============================================================================
+# ACCESS LOGS (ADMIN-ONLY)
+# ============================================================================
+
+
+@app.get("/admin/access-logs")
+def get_access_logs(
+    limit: int = Query(100, ge=1, le=1000),
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(require_admin),
+):
+    """
+    GET /admin/access-logs — returns audit access log records (Admin-only).
+    """
+    logs = (
+        db.query(AccessLog, User.email)
+        .outerjoin(User, AccessLog.user_id == User.id)
+        .order_by(desc(AccessLog.timestamp))
+        .limit(limit)
+        .all()
+    )
+
+    results = []
+    for log, email in logs:
+        results.append(
+            {
+                "id": str(log.id),
+                "user_id": str(log.user_id) if log.user_id else None,
+                "user_email": email,
+                "hospital_id": log.hospital_id,
+                "endpoint": log.endpoint,
+                "timestamp": log.timestamp.isoformat() if log.timestamp else None,
+                "query_params": log.query_params,
+            }
+        )
+
+    return {"access_logs": results, "count": len(results)}
 
 
 # ============================================================================
@@ -615,19 +822,51 @@ def get_forecasts(
 @app.post(
     "/tasks/fetch-external-signals",
     response_model=ExternalSignalsTaskResponse,
+    status_code=202,
     dependencies=[Depends(require_admin)],
 )
 def run_fetch_external_signals_task(db: Session = Depends(get_db)):
-    """Fetch external signals for all hospitals and upsert into DB."""
-    try:
-        summary = fetch_and_store_external_signals(db)
-        return ExternalSignalsTaskResponse(
-            status="success",
-            hospitals_total=summary["hospitals_total"],
-            processed=summary["processed"],
-            failed=summary["failed"],
-            upserted=summary["upserted"],
-        )
-    except Exception as e:
-        logger.exception(f"External signal task failed: {e}")
-        raise HTTPException(status_code=500, detail="Failed to fetch external signals")
+    """
+    Trigger an external-signal refresh for all hospitals (Admin-only).
+
+    Returns 202 Accepted immediately. The actual work runs in a background
+    daemon thread so uvicorn is not blocked. With 1,400+ hospitals and 2 API
+    calls each, a synchronous run would exceed any reasonable HTTP timeout.
+
+    The background thread uses its own DB session (not the request session)
+    to avoid holding the connection across thread boundaries.
+    """
+    hospitals_total = db.query(Hospital).count()
+    job_id = str(_uuid.uuid4())
+
+    def _run_job() -> None:
+        """Background worker — own DB session, own error handling."""
+        from database.session import SessionLocal as _SessionLocal
+
+        bg_db = _SessionLocal()
+        try:
+            summary = fetch_and_store_external_signals(bg_db)
+            logger.info(
+                f"[signals job {job_id}] complete: "
+                f"processed={summary['processed']} "
+                f"upserted={summary['upserted']} "
+                f"failed={summary['failed']}"
+            )
+        except Exception as exc:
+            logger.exception(f"[signals job {job_id}] failed: {exc}")
+        finally:
+            bg_db.close()
+
+    thread = threading.Thread(target=_run_job, daemon=True, name=f"signals-{job_id[:8]}")
+    thread.start()
+    logger.info(f"[signals job {job_id}] dispatched background thread for {hospitals_total} hospitals")
+
+    return ExternalSignalsTaskResponse(
+        status="accepted",
+        job_id=job_id,
+        hospitals_total=hospitals_total,
+        message=(
+            f"Signal refresh for {hospitals_total} hospitals started in background. "
+            f"Check server logs for job {job_id[:8]} to track progress."
+        ),
+    )

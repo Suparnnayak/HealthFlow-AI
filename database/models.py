@@ -39,12 +39,21 @@ class User(Base):
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
     )
     hashed_password = Column(String(255), nullable=False)
-    role = Column(String(50), nullable=False, default="analyst")
+    role = Column(String(50), nullable=False, default="hospital_staff")  # "admin" | "hospital_staff"
     is_active = Column(Boolean, default=True)
 
     # Relationships
     forecast_runs = relationship(
         "ForecastRun", back_populates="user", cascade="all, delete-orphan"
+    )
+    hospital_access = relationship(
+        "UserHospitalAccess", back_populates="user", cascade="all, delete-orphan"
+    )
+    refresh_tokens = relationship(
+        "RefreshToken", back_populates="user", cascade="all, delete-orphan"
+    )
+    access_logs = relationship(
+        "AccessLog", back_populates="user", cascade="all, delete-orphan"
     )
 
 
@@ -144,7 +153,7 @@ class ForecastRun(Base):
 
 
 class Forecast(Base):
-    """Individual forecast predictions — UPSERT-safe."""
+    """Individual forecast predictions — dual target, quantile bounds, and resource gap."""
 
     __tablename__ = "forecasts"
 
@@ -159,8 +168,13 @@ class Forecast(Base):
         ForeignKey("hospitals.id", ondelete="CASCADE"),
         nullable=False,
     )
-    horizon = Column(Integer, nullable=False)  # Days ahead (1-7)
+    target = Column(String(50), nullable=False, default="admissions")  # "admissions" | "inpatient_beds_used"
+    horizon = Column(Integer, nullable=False)  # Weeks ahead (1-4)
     prediction = Column(Float, nullable=False)
+    prediction_low = Column(Float, nullable=True)   # 10th percentile
+    prediction_high = Column(Float, nullable=True)  # 90th percentile
+    resource_gap = Column(Float, nullable=True)
+    capacity_source = Column(String(50), nullable=True)  # "reported" | "historical_median_fallback"
     forecast_date = Column(Date, nullable=False)  # The date being forecasted
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -172,13 +186,83 @@ class Forecast(Base):
         Index("idx_forecast_hospital_date", "hospital_id", "forecast_date"),
         Index("idx_forecast_run", "forecast_run_id"),
         Index("idx_forecast_horizon", "horizon"),
+        Index("idx_forecast_target", "target"),
         UniqueConstraint(
             "hospital_id",
             "forecast_date",
             "horizon",
-            name="uq_hospital_date_horizon",
+            "target",
+            name="uq_hospital_date_horizon_target",
         ),
     )
+
+
+class UserHospitalAccess(Base):
+    """
+    Join table mapping staff accounts to allowed hospitals (using ccn / hospital_id).
+    Admins bypass this table.
+    """
+
+    __tablename__ = "user_hospital_access"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    hospital_id = Column(String(100), nullable=False, index=True)  # CCN matching hospitals.hospital_id
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Relationships
+    user = relationship("User", back_populates="hospital_access")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "hospital_id", name="uq_user_hospital_access"),
+    )
+
+
+class AccessLog(Base):
+    """Audit log recording every data read on forecast and agent endpoints."""
+
+    __tablename__ = "access_log"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    hospital_id = Column(String(100), nullable=True, index=True)
+    endpoint = Column(String(255), nullable=False)
+    timestamp = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    query_params = Column(Text, nullable=True)
+
+    # Relationships
+    user = relationship("User", back_populates="access_logs")
+
+
+class RefreshToken(Base):
+    """Server-side refresh tokens for secure JWT refresh flow."""
+
+    __tablename__ = "refresh_tokens"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    token_hash = Column(String(255), unique=True, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    revoked_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Relationships
+    user = relationship("User", back_populates="refresh_tokens")
 
 
 class ExternalSignal(Base):

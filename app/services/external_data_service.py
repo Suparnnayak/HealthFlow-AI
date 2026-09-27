@@ -6,14 +6,17 @@ from __future__ import annotations
 
 from datetime import date, datetime
 import hashlib
+import logging
 from typing import Dict, List, Tuple
 import uuid
 
-import requests
+import requests as _requests
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from database.models import ExternalSignal, Hospital
+
+logger = logging.getLogger(__name__)
 
 OPEN_METEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 OPEN_METEO_AIR_QUALITY_URL = "https://air-quality-api.open-meteo.com/v1/air-quality"
@@ -38,7 +41,7 @@ def fetch_weather(latitude: float, longitude: float) -> Dict[str, float]:
     """
     Fetch current weather from Open-Meteo forecast API.
     """
-    response = requests.get(
+    response = _requests.get(
         OPEN_METEO_FORECAST_URL,
         params={
             "latitude": latitude,
@@ -48,7 +51,7 @@ def fetch_weather(latitude: float, longitude: float) -> Dict[str, float]:
             "timezone": "UTC",
             "forecast_days": 1,
         },
-        timeout=15,
+        timeout=5,  # tight per-request timeout; caller catches exceptions
     )
     response.raise_for_status()
     payload = response.json()
@@ -71,7 +74,7 @@ def fetch_aqi(latitude: float, longitude: float) -> float:
     """
     Fetch current AQI from Open-Meteo air quality API.
     """
-    response = requests.get(
+    response = _requests.get(
         OPEN_METEO_AIR_QUALITY_URL,
         params={
             "latitude": latitude,
@@ -80,7 +83,7 @@ def fetch_aqi(latitude: float, longitude: float) -> float:
             "timezone": "UTC",
             "forecast_days": 1,
         },
-        timeout=15,
+        timeout=5,  # tight per-request timeout; caller catches exceptions
     )
     response.raise_for_status()
     payload = response.json()

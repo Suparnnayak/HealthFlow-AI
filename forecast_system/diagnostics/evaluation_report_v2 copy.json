@@ -1,0 +1,759 @@
+{
+  "version": "2.0.0",
+  "trained_at": "2026-09-14T04:13:16.368226+00:00",
+  "dataset_info": {
+    "total_rows": 309060,
+    "n_hospitals": 1489,
+    "date_min": "2019-12-29",
+    "date_max": "2024-04-21",
+    "admissions_nonnull": 274975,
+    "admissions_nonnull_pct": 88.97139713971397,
+    "beds_nonnull": 288575,
+    "beds_nonnull_pct": 93.37183718371837
+  },
+  "tier_counts": {
+    "small": 496,
+    "medium": 496,
+    "large": 497
+  },
+  "metrics": {
+    "admissions": {
+      "1": {
+        "model": {
+          "overall": {
+            "MAE": 48.9092,
+            "RMSE": 103.9075,
+            "MAPE": 13.7554
+          },
+          "by_tier": {
+            "small": {
+              "MAE": 14.0969,
+              "RMSE": 25.9891,
+              "MAPE": 21.4984,
+              "n": 12785
+            },
+            "medium": {
+              "MAE": 42.3069,
+              "RMSE": 75.0779,
+              "MAPE": 14.1315,
+              "n": 13406
+            },
+            "large": {
+              "MAE": 87.203,
+              "RMSE": 158.2657,
+              "MAPE": 8.601,
+              "n": 13934
+            }
+          }
+        },
+        "ma4_baseline": {
+          "overall": {
+            "MAE": 48.684,
+            "RMSE": 104.2415,
+            "MAPE": 13.4036
+          },
+          "by_tier": {
+            "small": {
+              "MAE": 12.8644,
+              "RMSE": 25.7145,
+              "MAPE": 20.0874,
+              "n": 12785
+            },
+            "medium": {
+              "MAE": 42.2954,
+              "RMSE": 75.1459,
+              "MAPE": 14.0432,
+              "n": 13406
+            },
+            "large": {
+              "MAE": 87.6965,
+              "RMSE": 158.9069,
+              "MAPE": 8.6586,
+              "n": 13934
+            }
+          }
+        },
+        "naive_persistence": {
+          "overall": {
+            "MAE": 53.2787,
+            "RMSE": 110.9717,
+            "MAPE": 13.9332
+          },
+          "by_tier": {
+            "small": {
+              "MAE": 14.0138,
+              "RMSE": 27.4216,
+              "MAPE": 21.0181,
+              "n": 12785
+            },
+            "medium": {
+              "MAE": 45.9972,
+              "RMSE": 78.765,
+              "MAPE": 14.5143,
+              "n": 13406
+            },
+            "large": {
+              "MAE": 96.3115,
+              "RMSE": 169.7152,
+              "MAPE": 8.9946,
+              "n": 13934
+            }
+          }
+        },
+        "prediction_interval_coverage_pct": 82.12,
+        "best_method": "ma4_baseline",
+        "model_beats_ma4": false,
+        "model_beats_naive": true,
+        "test_samples": 40125
+      },
+      "2": {
+        "model": {
+          "overall": {
+            "MAE": 52.0103,
+            "RMSE": 110.957,
+            "MAPE": 14.8799
+          },
+          "by_tier": {
+            "small": {
+              "MAE": 15.2096,
+              "RMSE": 27.6659,
+              "MAPE": 23.1528,
+              "n": 12731
+            },
+            "medium": {
+              "MAE": 45.1534,
+              "RMSE": 80.8137,
+              "MAPE": 15.427,
+              "n": 13365
+            },
+            "large": {
+              "MAE": 92.3032,
+              "RMSE": 168.6483,
+              "MAPE": 9.2482,
+              "n": 13902
+            }
+          }
+        },
+        "ma4_baseline": {
+          "overall": {
+            "MAE": 51.464,
+            "RMSE": 110.8715,
+            "MAPE": 14.3506
+          },
+          "by_tier": {
+            "small": {
+              "MAE": 13.5687,
+              "RMSE": 27.163,
+              "MAPE": 21.2134,
+              "n": 12731
+            },
+            "medium": {
+              "MAE": 44.8199,
+              "RMSE": 80.4588,
+              "MAPE": 15.2481,
+              "n": 13365
+            },
+            "large": {
+              "MAE": 92.5548,
+              "RMSE": 168.7246,
+              "MAPE": 9.263,
+              "n": 13902
+            }
+          }
+        },
+        "naive_persistence": {
+          "overall": {
+            "MAE": 56.2759,
+            "RMSE": 119.0736,
+            "MAPE": 14.9764
+          },
+          "by_tier": {
+            "small": {
+              "MAE": 14.9422,
+              "RMSE": 29.3037,
+              "MAPE": 22.5571,
+              "n": 12731
+            },
+            "medium": {
+              "MAE": 48.9923,
+              "RMSE": 84.5505,
+              "MAPE": 15.6242,
+              "n": 13365
+            },
+            "large": {
+              "MAE": 101.1303,
+              "RMSE": 182.0291,
+              "MAPE": 9.6786,
+              "n": 13902
+            }
+          }
+        },
+        "prediction_interval_coverage_pct": 81.76,
+        "best_method": "ma4_baseline",
+        "model_beats_ma4": false,
+        "model_beats_naive": true,
+        "test_samples": 39998
+      },
+      "3": {
+        "model": {
+          "overall": {
+            "MAE": 54.4138,
+            "RMSE": 115.9124,
+            "MAPE": 15.8442
+          },
+          "by_tier": {
+            "small": {
+              "MAE": 16.0136,
+              "RMSE": 28.8944,
+              "MAPE": 24.478,
+              "n": 12587
+            },
+            "medium": {
+              "MAE": 47.2961,
+              "RMSE": 85.5586,
+              "MAPE": 16.613,
+              "n": 13233
+            },
+            "large": {
+              "MAE": 96.5079,
+              "RMSE": 175.7676,
+              "MAPE": 9.7754,
+              "n": 13720
+            }
+          }
+        },
+        "ma4_baseline": {
+          "overall": {
+            "MAE": 53.7427,
+            "RMSE": 115.8647,
+            "MAPE": 15.2264
+          },
+          "by_tier": {
+            "small": {
+              "MAE": 14.0952,
+              "RMSE": 28.2948,
+              "MAPE": 22.1908,
+              "n": 12587
+            },
+            "medium": {
+              "MAE": 46.9149,
+              "RMSE": 85.1288,
+              "MAPE": 16.4326,
+              "n": 13233
+            },
+            "large": {
+              "MAE": 96.7016,
+              "RMSE": 175.9676,
+              "MAPE": 9.7801,
+              "n": 13720
+            }
+          }
+        },
+        "naive_persistence": {
+          "overall": {
+            "MAE": 58.395,
+            "RMSE": 122.6168,
+            "MAPE": 15.6293
+          },
+          "by_tier": {
+            "small": {
+              "MAE": 15.5466,
+              "RMSE": 30.5893,
+              "MAPE": 23.8088,
+              "n": 12587
+            },
+            "medium": {
+              "MAE": 50.7178,
+              "RMSE": 87.6821,
+              "MAPE": 16.1401,
+              "n": 13233
+            },
+            "large": {
+              "MAE": 105.1097,
+              "RMSE": 187.2316,
+              "MAPE": 10.0845,
+              "n": 13720
+            }
+          }
+        },
+        "prediction_interval_coverage_pct": 81.96,
+        "best_method": "ma4_baseline",
+        "model_beats_ma4": false,
+        "model_beats_naive": true,
+        "test_samples": 39540
+      },
+      "4": {
+        "model": {
+          "overall": {
+            "MAE": 56.3551,
+            "RMSE": 120.3325,
+            "MAPE": 16.7692
+          },
+          "by_tier": {
+            "small": {
+              "MAE": 16.8695,
+              "RMSE": 30.109,
+              "MAPE": 25.9354,
+              "n": 12446
+            },
+            "medium": {
+              "MAE": 49.2896,
+              "RMSE": 89.5743,
+              "MAPE": 17.7071,
+              "n": 13061
+            },
+            "large": {
+              "MAE": 99.431,
+              "RMSE": 182.1246,
+              "MAPE": 10.2085,
+              "n": 13551
+            }
+          }
+        },
+        "ma4_baseline": {
+          "overall": {
+            "MAE": 55.5878,
+            "RMSE": 120.3758,
+            "MAPE": 15.9627
+          },
+          "by_tier": {
+            "small": {
+              "MAE": 14.52,
+              "RMSE": 29.2132,
+              "MAPE": 23.0198,
+              "n": 12446
+            },
+            "medium": {
+              "MAE": 48.7489,
+              "RMSE": 88.9107,
+              "MAPE": 17.4208,
+              "n": 13061
+            },
+            "large": {
+              "MAE": 99.8983,
+              "RMSE": 182.6536,
+              "MAPE": 10.2202,
+              "n": 13551
+            }
+          }
+        },
+        "naive_persistence": {
+          "overall": {
+            "MAE": 61.4448,
+            "RMSE": 129.1659,
+            "MAPE": 16.9057
+          },
+          "by_tier": {
+            "small": {
+              "MAE": 16.0749,
+              "RMSE": 31.6406,
+              "MAPE": 25.0811,
+              "n": 12446
+            },
+            "medium": {
+              "MAE": 53.5844,
+              "RMSE": 93.5771,
+              "MAPE": 17.9008,
+              "n": 13061
+            },
+            "large": {
+              "MAE": 110.6912,
+              "RMSE": 196.7948,
+              "MAPE": 10.9053,
+              "n": 13551
+            }
+          }
+        },
+        "prediction_interval_coverage_pct": 82.86,
+        "best_method": "ma4_baseline",
+        "model_beats_ma4": false,
+        "model_beats_naive": true,
+        "test_samples": 39058
+      }
+    },
+    "inpatient_beds_used": {
+      "1": {
+        "model": {
+          "overall": {
+            "MAE": 6.6158,
+            "RMSE": 12.078,
+            "MAPE": 10.4128
+          },
+          "by_tier": {
+            "small": {
+              "MAE": 2.5482,
+              "RMSE": 4.967,
+              "MAPE": 16.9354,
+              "n": 12172
+            },
+            "medium": {
+              "MAE": 5.218,
+              "RMSE": 8.6445,
+              "MAPE": 10.7055,
+              "n": 14740
+            },
+            "large": {
+              "MAE": 11.2652,
+              "RMSE": 17.699,
+              "MAPE": 5.0712,
+              "n": 15080
+            }
+          }
+        },
+        "ma4_baseline": {
+          "overall": {
+            "MAE": 6.7781,
+            "RMSE": 12.42,
+            "MAPE": 10.3663
+          },
+          "by_tier": {
+            "small": {
+              "MAE": 2.4639,
+              "RMSE": 4.9155,
+              "MAPE": 16.3318,
+              "n": 12172
+            },
+            "medium": {
+              "MAE": 5.3269,
+              "RMSE": 8.9083,
+              "MAPE": 10.8408,
+              "n": 14740
+            },
+            "large": {
+              "MAE": 11.6789,
+              "RMSE": 18.2339,
+              "MAPE": 5.2789,
+              "n": 15080
+            }
+          }
+        },
+        "naive_persistence": {
+          "overall": {
+            "MAE": 7.4105,
+            "RMSE": 13.4072,
+            "MAPE": 11.2711
+          },
+          "by_tier": {
+            "small": {
+              "MAE": 2.5882,
+              "RMSE": 4.7822,
+              "MAPE": 17.736,
+              "n": 12172
+            },
+            "medium": {
+              "MAE": 5.8325,
+              "RMSE": 9.2645,
+              "MAPE": 11.8387,
+              "n": 14740
+            },
+            "large": {
+              "MAE": 12.8454,
+              "RMSE": 19.9546,
+              "MAPE": 5.7057,
+              "n": 15080
+            }
+          }
+        },
+        "prediction_interval_coverage_pct": 80.1,
+        "best_method": "model",
+        "model_beats_ma4": true,
+        "model_beats_naive": true,
+        "test_samples": 41992
+      },
+      "2": {
+        "model": {
+          "overall": {
+            "MAE": 6.9763,
+            "RMSE": 12.8826,
+            "MAPE": 10.9099
+          },
+          "by_tier": {
+            "small": {
+              "MAE": 2.6721,
+              "RMSE": 5.3135,
+              "MAPE": 17.59,
+              "n": 12097
+            },
+            "medium": {
+              "MAE": 5.5137,
+              "RMSE": 9.3932,
+              "MAPE": 11.3038,
+              "n": 14690
+            },
+            "large": {
+              "MAE": 11.8721,
+              "RMSE": 18.7846,
+              "MAPE": 5.3573,
+              "n": 15024
+            }
+          }
+        },
+        "ma4_baseline": {
+          "overall": {
+            "MAE": 7.1611,
+            "RMSE": 13.232,
+            "MAPE": 10.8766
+          },
+          "by_tier": {
+            "small": {
+              "MAE": 2.6051,
+              "RMSE": 5.3431,
+              "MAPE": 17.001,
+              "n": 12097
+            },
+            "medium": {
+              "MAE": 5.6254,
+              "RMSE": 9.5653,
+              "MAPE": 11.4335,
+              "n": 14690
+            },
+            "large": {
+              "MAE": 12.3312,
+              "RMSE": 19.3599,
+              "MAPE": 5.5948,
+              "n": 15024
+            }
+          }
+        },
+        "naive_persistence": {
+          "overall": {
+            "MAE": 7.861,
+            "RMSE": 14.3173,
+            "MAPE": 12.0089
+          },
+          "by_tier": {
+            "small": {
+              "MAE": 2.8252,
+              "RMSE": 5.3973,
+              "MAPE": 18.9632,
+              "n": 12097
+            },
+            "medium": {
+              "MAE": 6.1992,
+              "RMSE": 10.137,
+              "MAPE": 12.5849,
+              "n": 14690
+            },
+            "large": {
+              "MAE": 13.5405,
+              "RMSE": 21.1313,
+              "MAPE": 6.0663,
+              "n": 15024
+            }
+          }
+        },
+        "prediction_interval_coverage_pct": 80.43,
+        "best_method": "model",
+        "model_beats_ma4": true,
+        "model_beats_naive": true,
+        "test_samples": 41811
+      },
+      "3": {
+        "model": {
+          "overall": {
+            "MAE": 7.2983,
+            "RMSE": 13.5242,
+            "MAPE": 11.3281
+          },
+          "by_tier": {
+            "small": {
+              "MAE": 2.7924,
+              "RMSE": 5.6021,
+              "MAPE": 18.3149,
+              "n": 12026
+            },
+            "medium": {
+              "MAE": 5.7187,
+              "RMSE": 9.86,
+              "MAPE": 11.6149,
+              "n": 14567
+            },
+            "large": {
+              "MAE": 12.4789,
+              "RMSE": 19.7218,
+              "MAPE": 5.6295,
+              "n": 14901
+            }
+          }
+        },
+        "ma4_baseline": {
+          "overall": {
+            "MAE": 7.5201,
+            "RMSE": 13.9418,
+            "MAPE": 11.2919
+          },
+          "by_tier": {
+            "small": {
+              "MAE": 2.714,
+              "RMSE": 5.6024,
+              "MAPE": 17.5558,
+              "n": 12026
+            },
+            "medium": {
+              "MAE": 5.8466,
+              "RMSE": 10.0579,
+              "MAPE": 11.8265,
+              "n": 14567
+            },
+            "large": {
+              "MAE": 13.0347,
+              "RMSE": 20.4216,
+              "MAPE": 5.912,
+              "n": 14901
+            }
+          }
+        },
+        "naive_persistence": {
+          "overall": {
+            "MAE": 8.1133,
+            "RMSE": 14.8775,
+            "MAPE": 12.3833
+          },
+          "by_tier": {
+            "small": {
+              "MAE": 2.9458,
+              "RMSE": 5.8275,
+              "MAPE": 19.463,
+              "n": 12026
+            },
+            "medium": {
+              "MAE": 6.3918,
+              "RMSE": 10.6284,
+              "MAPE": 12.9624,
+              "n": 14567
+            },
+            "large": {
+              "MAE": 13.9666,
+              "RMSE": 21.875,
+              "MAPE": 6.3273,
+              "n": 14901
+            }
+          }
+        },
+        "prediction_interval_coverage_pct": 78.94,
+        "best_method": "model",
+        "model_beats_ma4": true,
+        "model_beats_naive": true,
+        "test_samples": 41494
+      },
+      "4": {
+        "model": {
+          "overall": {
+            "MAE": 7.6022,
+            "RMSE": 14.0982,
+            "MAPE": 11.7007
+          },
+          "by_tier": {
+            "small": {
+              "MAE": 2.8959,
+              "RMSE": 5.7714,
+              "MAPE": 18.9365,
+              "n": 11930
+            },
+            "medium": {
+              "MAE": 5.8959,
+              "RMSE": 10.2667,
+              "MAPE": 11.9573,
+              "n": 14487
+            },
+            "large": {
+              "MAE": 13.0488,
+              "RMSE": 20.5619,
+              "MAPE": 5.8635,
+              "n": 14847
+            }
+          }
+        },
+        "ma4_baseline": {
+          "overall": {
+            "MAE": 7.8641,
+            "RMSE": 14.5593,
+            "MAPE": 11.6508
+          },
+          "by_tier": {
+            "small": {
+              "MAE": 2.7991,
+              "RMSE": 5.762,
+              "MAPE": 18.0409,
+              "n": 11930
+            },
+            "medium": {
+              "MAE": 6.0711,
+              "RMSE": 10.4702,
+              "MAPE": 12.188,
+              "n": 14487
+            },
+            "large": {
+              "MAE": 13.6836,
+              "RMSE": 21.3422,
+              "MAPE": 6.193,
+              "n": 14847
+            }
+          }
+        },
+        "naive_persistence": {
+          "overall": {
+            "MAE": 8.3744,
+            "RMSE": 15.3335,
+            "MAPE": 12.8004
+          },
+          "by_tier": {
+            "small": {
+              "MAE": 3.0416,
+              "RMSE": 6.0115,
+              "MAPE": 20.0852,
+              "n": 11930
+            },
+            "medium": {
+              "MAE": 6.6023,
+              "RMSE": 10.9378,
+              "MAPE": 13.4651,
+              "n": 14487
+            },
+            "large": {
+              "MAE": 14.3886,
+              "RMSE": 22.5318,
+              "MAPE": 6.5276,
+              "n": 14847
+            }
+          }
+        },
+        "prediction_interval_coverage_pct": 81.42,
+        "best_method": "model",
+        "model_beats_ma4": true,
+        "model_beats_naive": true,
+        "test_samples": 41264
+      }
+    }
+  },
+  "resource_gap": {
+    "horizon_1": {
+      "hospital_weeks_exceeding_85pct": 6119,
+      "total_hospital_weeks": 41992,
+      "pct_exceeding": 14.57,
+      "mean_gap_when_exceeded": 52.72,
+      "max_gap": 927.96
+    },
+    "horizon_2": {
+      "hospital_weeks_exceeding_85pct": 6063,
+      "total_hospital_weeks": 41811,
+      "pct_exceeding": 14.5,
+      "mean_gap_when_exceeded": 52.78,
+      "max_gap": 919.84
+    },
+    "horizon_3": {
+      "hospital_weeks_exceeding_85pct": 5969,
+      "total_hospital_weeks": 41494,
+      "pct_exceeding": 14.39,
+      "mean_gap_when_exceeded": 52.57,
+      "max_gap": 914.93
+    },
+    "horizon_4": {
+      "hospital_weeks_exceeding_85pct": 5929,
+      "total_hospital_weeks": 41264,
+      "pct_exceeding": 14.37,
+      "mean_gap_when_exceeded": 52.47,
+      "max_gap": 912.0
+    }
+  }
+}

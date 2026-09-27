@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import Navbar from "@/components/layout/Navbar";
 import api, { getApiErrorMessage } from "@/lib/api";
+import { getUserHospitalIds, getUserRole } from "@/lib/auth";
 
 interface Message {
   id: string;
@@ -14,11 +15,18 @@ interface Message {
   time?: number;
 }
 
-const SUGGESTIONS = [
-  "Why is the forecast for HOSP_1 going up over the next 7 days?",
-  "Explain the admission trend for HOSP_3",
-  "What factors are driving HOSP_5 forecast?",
-  "Analyze the outlook for HOSP_2 this week",
+interface HospitalItem {
+  hospital_id: string;
+  name: string;
+  region: string;
+  capacity?: number;
+}
+
+const CLINICAL_SUGGESTIONS = [
+  "Why is inpatient bed occupancy rising over the 4-week forecast horizon?",
+  "Will our facility exceed the 85% safe capacity threshold in the coming weeks?",
+  "Explain the 80% confidence interval bounds and risk of admission surge",
+  "Summarize how external signals (flu, COVID, weather) are affecting demand",
 ];
 
 export default function AgentPage() {
@@ -33,7 +41,8 @@ function AgentContent() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [hospitals, setHospitals] = useState<string[]>([]);
+  const [hospitals, setHospitals] = useState<HospitalItem[]>([]);
+  const [selectedHospital, setSelectedHospital] = useState<string>("10001");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -47,9 +56,20 @@ function AgentContent() {
   const loadHospitals = async () => {
     try {
       const res = await api.get("/hospitals");
-      setHospitals(res.data.hospitals || []);
+      let items: HospitalItem[] = res.data.items || [];
+      const userRole = getUserRole();
+      const assigned = getUserHospitalIds();
+
+      if (userRole === "hospital_staff" && assigned.length > 0) {
+        items = items.filter((h) => assigned.includes(h.hospital_id));
+      }
+
+      setHospitals(items);
+      if (items.length > 0) {
+        setSelectedHospital(items[0].hospital_id);
+      }
     } catch {
-      // silent
+      // silent fallback
     }
   };
 
@@ -66,7 +86,10 @@ function AgentContent() {
     setLoading(true);
 
     try {
-      const res = await api.post("/agent/query", { question });
+      const res = await api.post("/agent/query", {
+        question,
+        hospital_id: selectedHospital,
+      });
       const assistantMsg: Message = {
         id: (Date.now() + 1).toString(),
         role: "assistant",
@@ -92,43 +115,65 @@ function AgentContent() {
     sendQuery(input);
   };
 
+  const activeHospitalItem = hospitals.find((h) => h.hospital_id === selectedHospital);
+
   return (
     <main className="min-h-screen bg-navy grid-overlay bg-gradient-animated flex flex-col">
       <Navbar />
 
-      <div className="flex-1 max-w-4xl w-full mx-auto px-4 md:px-8 pt-24 pb-4 flex flex-col">
-        {/* Header */}
+      <div className="flex-1 max-w-4xl w-full mx-auto px-4 md:px-8 pt-24 pb-6 flex flex-col">
+        {/* Header with Hospital Focus Bar */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="mb-6"
+          className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-white/5"
         >
-          <h1 className="text-2xl md:text-3xl font-bold mb-1">
-            <span className="gradient-text">AI Forecast Analyst</span>
-          </h1>
-          <p className="text-slate-400 text-sm">
-            Ask questions about any hospital — the agent uses real forecast data, admission
-            history, and external signals from the database.
-          </p>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-cyan animate-pulse" />
+              <h1 className="text-2xl font-bold tracking-tight">
+                <span className="gradient-text">AI Forecast Analyst</span>
+              </h1>
+            </div>
+            <p className="text-slate-400 text-xs mt-1">
+              Grounded in live 4-week dual-target LightGBM models, 80% CI quantiles, and epidemiological signals.
+            </p>
+          </div>
+
+          {/* Facility Context Selector */}
+          <div className="flex items-center gap-2 bg-navy-light/60 border border-white/10 rounded-xl px-3 py-1.5 self-start sm:self-auto">
+            <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Facility:</span>
+            <select
+              value={selectedHospital}
+              onChange={(e) => setSelectedHospital(e.target.value)}
+              className="bg-transparent text-xs text-cyan font-mono font-medium focus:outline-none cursor-pointer max-w-[200px] truncate"
+            >
+              {hospitals.map((h) => (
+                <option key={h.hospital_id} value={h.hospital_id} className="bg-navy text-slate-200">
+                  {h.hospital_id} — {h.name} ({h.region})
+                </option>
+              ))}
+            </select>
+          </div>
         </motion.div>
 
         {/* Messages area */}
-        <div className="flex-1 overflow-y-auto space-y-4 mb-4 min-h-0">
+        <div className="flex-1 overflow-y-auto space-y-4 mb-4 min-h-0 pr-1">
           {messages.length === 0 && (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
-              transition={{ delay: 0.2 }}
-              className="flex flex-col items-center justify-center h-full py-16"
+              transition={{ delay: 0.15 }}
+              className="flex flex-col items-center justify-center h-full py-12"
             >
-              <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-cyan/20 to-blue-600/20 border border-cyan/20 flex items-center justify-center mb-6">
+              <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-cyan/20 to-blue-600/20 border border-cyan/30 flex items-center justify-center mb-4 shadow-lg shadow-cyan/10">
                 <svg
-                  width="28"
-                  height="28"
+                  width="26"
+                  height="26"
                   viewBox="0 0 24 24"
                   fill="none"
                   stroke="currentColor"
-                  strokeWidth="1.5"
+                  strokeWidth="1.75"
                   className="text-cyan"
                 >
                   <path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7z" />
@@ -137,40 +182,33 @@ function AgentContent() {
                   <path d="M15 17v2" />
                 </svg>
               </div>
-              <p className="text-slate-400 text-sm mb-6 text-center max-w-md">
-                Ask a question about any hospital to get an AI-powered analysis grounded in
-                real database data.
+
+              <h2 className="text-base font-semibold text-slate-200 mb-1">
+                Operational Clinical Intelligence
+              </h2>
+              <p className="text-slate-400 text-xs mb-6 text-center max-w-md">
+                Analyzing{" "}
+                <span className="text-cyan font-mono font-medium">
+                  {activeHospitalItem ? `${activeHospitalItem.name} (${activeHospitalItem.hospital_id})` : selectedHospital}
+                </span>
+                . Select a clinical scenario below or type a query:
               </p>
 
-              {/* Suggestions */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-lg">
-                {SUGGESTIONS.map((s, i) => (
+              {/* Clinical Prompt Suggestions */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full max-w-xl">
+                {CLINICAL_SUGGESTIONS.map((promptText, i) => (
                   <button
                     key={i}
-                    onClick={() => sendQuery(s)}
-                    className="text-left text-xs text-slate-300 glass-card rounded-lg px-3 py-2.5 hover:border-cyan/30 hover:text-cyan transition-all"
+                    onClick={() => sendQuery(promptText)}
+                    className="text-left text-xs text-slate-300 glass-card rounded-xl p-3 hover:border-cyan/40 hover:text-cyan transition-all group flex flex-col justify-between gap-2 shadow-sm"
                   >
-                    {s}
+                    <span>{promptText}</span>
+                    <span className="text-[10px] text-slate-500 group-hover:text-cyan/70 font-mono">
+                      Ask agent &rarr;
+                    </span>
                   </button>
                 ))}
               </div>
-
-              {/* Hospital chips */}
-              {hospitals.length > 0 && (
-                <div className="mt-6">
-                  <p className="text-xs text-slate-500 mb-2 text-center">Available hospitals</p>
-                  <div className="flex flex-wrap gap-1.5 justify-center">
-                    {hospitals.map((h) => (
-                      <span
-                        key={h}
-                        className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan/10 text-cyan/70 border border-cyan/10"
-                      >
-                        {h}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
             </motion.div>
           )}
 
@@ -180,32 +218,33 @@ function AgentContent() {
                 key={msg.id}
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.3 }}
+                transition={{ duration: 0.25 }}
                 className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
               >
                 {msg.role === "user" ? (
-                  <div className="max-w-[80%] bg-gradient-to-r from-cyan/20 to-blue-600/20 border border-cyan/20 rounded-2xl rounded-br-md px-4 py-3">
+                  <div className="max-w-[80%] bg-gradient-to-r from-cyan/20 to-blue-600/20 border border-cyan/30 rounded-2xl rounded-br-sm px-4 py-3 shadow-md">
                     <p className="text-sm text-slate-100">{msg.content}</p>
                   </div>
                 ) : msg.role === "error" ? (
-                  <div className="max-w-[85%] bg-red-500/10 border border-red-500/20 rounded-2xl rounded-bl-md px-4 py-3">
+                  <div className="max-w-[85%] bg-red-500/10 border border-red-500/20 rounded-2xl rounded-bl-sm px-4 py-3">
                     <p className="text-sm text-red-400">{msg.content}</p>
                   </div>
                 ) : (
-                  <div className="max-w-[85%] glass-card rounded-2xl rounded-bl-md px-4 py-3">
-                    {msg.hospital && (
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan/10 text-cyan border border-cyan/20">
-                          {msg.hospital}
+                  <div className="max-w-[90%] glass-card rounded-2xl rounded-bl-sm px-5 py-4 shadow-lg border border-white/10">
+                    <div className="flex items-center justify-between gap-3 mb-3 pb-2 border-b border-white/5">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-cyan/15 text-cyan border border-cyan/20">
+                          Hospital {msg.hospital || selectedHospital}
                         </span>
-                        {msg.time && (
-                          <span className="text-[10px] text-slate-500">
-                            {msg.time.toFixed(1)}s
-                          </span>
-                        )}
+                        <span className="text-[10px] text-slate-400">Groq Production LLM</span>
                       </div>
-                    )}
-                    <div className="text-sm text-slate-200 leading-relaxed whitespace-pre-wrap">
+                      {msg.time !== undefined && (
+                        <span className="text-[10px] text-slate-500 font-mono">
+                          {msg.time.toFixed(2)}s inference
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-sm text-slate-200 leading-relaxed whitespace-pre-wrap font-sans">
                       {msg.content}
                     </div>
                   </div>
@@ -220,14 +259,16 @@ function AgentContent() {
               animate={{ opacity: 1 }}
               className="flex justify-start"
             >
-              <div className="glass-card rounded-2xl rounded-bl-md px-4 py-3">
-                <div className="flex items-center gap-2">
-                  <div className="flex gap-1">
+              <div className="glass-card rounded-2xl rounded-bl-sm px-4 py-3 border border-cyan/20">
+                <div className="flex items-center gap-3">
+                  <div className="flex gap-1.5">
                     <span className="w-2 h-2 bg-cyan rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
                     <span className="w-2 h-2 bg-cyan rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
                     <span className="w-2 h-2 bg-cyan rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
                   </div>
-                  <span className="text-xs text-slate-400">Analyzing with AI...</span>
+                  <span className="text-xs text-slate-400 font-medium">
+                    Retrieving forecast quantiles & analyzing risk...
+                  </span>
                 </div>
               </div>
             </motion.div>
@@ -236,11 +277,11 @@ function AgentContent() {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Input */}
+        {/* Input Form */}
         <motion.form
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.3 }}
+          transition={{ delay: 0.1 }}
           onSubmit={handleSubmit}
           className="flex gap-2 items-center"
         >
@@ -249,20 +290,20 @@ function AgentContent() {
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Ask about a hospital... (e.g. Why is HOSP_1 forecast rising?)"
+              placeholder={`Ask about hospital ${selectedHospital} (e.g., Will we exceed 85% capacity in week 3?)...`}
               disabled={loading}
-              className="w-full px-4 py-3 pr-12 glass-card rounded-xl text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-cyan/40 disabled:opacity-50"
+              className="w-full px-4 py-3.5 glass-card rounded-xl text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-cyan/50 disabled:opacity-50 transition-colors"
             />
           </div>
           <button
             type="submit"
             disabled={loading || !input.trim()}
-            className="px-5 py-3 bg-gradient-to-r from-cyan to-blue-600 text-white font-medium rounded-xl hover:shadow-lg hover:shadow-cyan/25 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
+            className="px-5 py-3.5 bg-gradient-to-r from-cyan to-teal text-navy font-semibold rounded-xl hover:shadow-lg hover:shadow-cyan/25 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0 flex items-center justify-center"
           >
             {loading ? (
-              <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              <div className="w-5 h-5 border-2 border-navy border-t-transparent rounded-full animate-spin" />
             ) : (
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25">
                 <path d="M22 2L11 13" />
                 <path d="M22 2L15 22L11 13L2 9L22 2Z" />
               </svg>
@@ -273,4 +314,3 @@ function AgentContent() {
     </main>
   );
 }
-

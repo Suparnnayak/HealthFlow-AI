@@ -1,5 +1,4 @@
-"""Pydantic schemas for the Agent endpoint."""
-
+from typing import Optional
 from pydantic import BaseModel, Field
 
 
@@ -8,14 +7,17 @@ class AgentQueryRequest(BaseModel):
 
     question: str = Field(
         ...,
-        min_length=5,
-        max_length=500,
-        description="Natural-language question about a hospital forecast. "
-        "Must mention a hospital code (e.g. HOSP_1).",
+        min_length=3,
+        max_length=1000,
+        description="Natural-language question about a hospital forecast.",
         examples=[
-            "Why is HOSP_3 forecast increasing over the next 7 days?",
-            "Explain the admission trend for HOSP_1",
+            "Why is 10001 bed occupancy increasing over the next 4 weeks?",
+            "Explain the admission trend for 10017",
         ],
+    )
+    hospital_id: Optional[str] = Field(
+        None,
+        description="Optional hospital ID (e.g. 10001). If omitted, extracted from question text or resolved from user profile.",
     )
 
 

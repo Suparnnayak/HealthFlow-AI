@@ -26,7 +26,7 @@ const FEATURES = [
       </svg>
     ),
     title: "Precomputed Forecasting",
-    desc: "7-day admission predictions powered by LightGBM, precomputed daily via GitHub Actions. Sub-second API response times.",
+    desc: "4-week dual-target predictions (demand & occupancy) powered by LightGBM, precomputed weekly with 10th-90th quantile intervals. Sub-second API response times.",
   },
   {
     icon: (
@@ -113,8 +113,8 @@ export default function LandingPage() {
               custom={2}
               className="mt-6 text-lg text-slate-400 max-w-2xl mx-auto leading-relaxed"
             >
-              Predict admissions 7 days ahead with ML-powered forecasting, live external signals,
-              and an AI agent that explains every trend. Built for modern hospital operations teams.
+              Forecast admissions and inpatient occupancy 4 weeks ahead with ML-powered quantiles,
+              capacity-guarded safety thresholds, and hospital-scoped role governance.
             </motion.p>
 
             <motion.div

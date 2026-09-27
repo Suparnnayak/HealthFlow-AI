@@ -57,4 +57,16 @@ def decode_access_token(token: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def generate_raw_refresh_token() -> str:
+    """Generate a high-entropy cryptographically secure refresh token string."""
+    import secrets
+    return secrets.token_urlsafe(64)
+
+
+def hash_token(raw_token: str) -> str:
+    """Compute SHA-256 hash of a raw refresh token for safe DB storage."""
+    import hashlib
+    return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
+
 

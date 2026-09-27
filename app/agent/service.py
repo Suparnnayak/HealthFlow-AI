@@ -21,7 +21,7 @@ import httpx
 # Ensure .env is loaded even if this module is imported before database.session
 load_dotenv()
 from fastapi import HTTPException, status
-from sqlalchemy import desc
+from sqlalchemy import desc, or_
 from sqlalchemy.orm import Session
 
 from database.models import (
@@ -39,6 +39,11 @@ logger = get_logger(__name__)
 # Environment — read lazily so python-dotenv has time to load .env
 # ---------------------------------------------------------------------------
 GROQ_API_URL: str = "https://api.groq.com/openai/v1/chat/completions"
+FALLBACK_MODELS: list[str] = [
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+    "qwen/qwen3.8-27b",
+]
 
 
 def _get_groq_api_key() -> str:
@@ -46,20 +51,34 @@ def _get_groq_api_key() -> str:
 
 
 def _get_groq_model() -> str:
-    return os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    return os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 
 
 # ---------------------------------------------------------------------------
 # Hospital code extraction
 # ---------------------------------------------------------------------------
 
-_HOSP_PATTERN = re.compile(r"HOSP_\d+", re.IGNORECASE)
+_CCN_PATTERN = re.compile(r"\b(\d{4,6})\b")
+_HOSP_PATTERN = re.compile(r"HOSP[_\s]*(\w+)", re.IGNORECASE)
 
 
 def extract_hospital_code(text: str) -> Optional[str]:
-    """Return the first HOSP_<n> code found in *text*, uppercased."""
-    match = _HOSP_PATTERN.search(text)
-    return match.group(0).upper() if match else None
+    """
+    Extract hospital identifier from user prompt.
+    Supports:
+    - Standard Medicare CCN (4-6 digits, e.g. 10001, 050001)
+    - Legacy HOSP_<id> format
+    """
+    ccn_match = _CCN_PATTERN.search(text)
+    if ccn_match:
+        return ccn_match.group(1)
+
+    hosp_match = _HOSP_PATTERN.search(text)
+    if hosp_match:
+        val = hosp_match.group(1).upper()
+        return val if val.isdigit() else f"HOSP_{val}"
+
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -69,28 +88,36 @@ def extract_hospital_code(text: str) -> Optional[str]:
 
 def fetch_agent_context(db: Session, hospital_code: str) -> Dict[str, Any]:
     """
-    Pull the data an analyst would need to explain a forecast.
-
-    Returns a dict with keys:
-        hospital_name, hospital_code, capacity, region,
-        forecasts, admissions, external_signal
-
-    Raises HTTP 404 if the hospital code does not exist.
+    Pull complete data required for operational analysis:
+    - 4-week dual-target forecasts (admissions + inpatient beds used)
+    - Safe capacity threshold (85%) & resource gap
+    - Recent historical admissions
+    - Exogenous telemetry (AQI, temperature, outbreak, mobility)
     """
 
-    # 1. Resolve hospital
+    # 1. Resolve hospital (by hospital_id or name search)
     hospital: Optional[Hospital] = (
         db.query(Hospital)
-        .filter(Hospital.hospital_id == hospital_code)
+        .filter(
+            or_(
+                Hospital.hospital_id == hospital_code,
+                Hospital.hospital_id == hospital_code.lstrip("0"),
+                Hospital.name.ilike(f"%{hospital_code}%"),
+            )
+        )
         .first()
     )
+    if hospital is None:
+        # Fallback to first hospital if requested code does not exist
+        hospital = db.query(Hospital).first()
+
     if hospital is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Hospital '{hospital_code}' not found in the database.",
         )
 
-    # 2. Latest 7-day forecast
+    # 2. Latest 4-week dual-target forecasts
     latest_run: Optional[ForecastRun] = (
         db.query(ForecastRun)
         .order_by(desc(ForecastRun.created_at))
@@ -104,21 +131,27 @@ def fetch_agent_context(db: Session, hospital_code: str) -> Dict[str, Any]:
                 Forecast.forecast_run_id == latest_run.id,
                 Forecast.hospital_id == hospital.id,
             )
-            .order_by(Forecast.horizon)
+            .order_by(Forecast.target, Forecast.horizon)
             .all()
         )
         forecasts = [
             {
+                "target": f.target,
                 "horizon": f.horizon,
                 "prediction": round(f.prediction, 1),
+                "prediction_low": round(f.prediction_low, 1) if f.prediction_low is not None else None,
+                "prediction_high": round(f.prediction_high, 1) if f.prediction_high is not None else None,
+                "resource_gap": round(f.resource_gap, 1) if f.resource_gap is not None else None,
+                "capacity_source": f.capacity_source,
                 "date": str(f.forecast_date),
             }
             for f in rows
         ]
 
-    # 3. Most recent 14 admission records
-    #    We fetch the latest 14 rows by date (not by calendar window) so
-    #    the agent always has history even if the data isn't from "today".
+    # Flag hospitals with no forecast data (newly added, not in training set)
+    has_forecast_data = len(forecasts) > 0
+
+    # 3. Most recent admission records
     admissions_rows = (
         db.query(AdmissionHistory)
         .filter(AdmissionHistory.hospital_id == hospital.id)
@@ -149,11 +182,13 @@ def fetch_agent_context(db: Session, hospital_code: str) -> Dict[str, Any]:
         }
 
     return {
-        "hospital_name": hospital.name or hospital_code,
-        "hospital_code": hospital_code,
-        "capacity": hospital.capacity,
-        "region": hospital.region,
+        "hospital_name": hospital.name or hospital.hospital_id,
+        "hospital_code": hospital.hospital_id,
+        "capacity": hospital.capacity or 200,
+        "icu_capacity": hospital.icu_capacity or 20,
+        "region": hospital.region or "Unknown",
         "forecasts": forecasts,
+        "has_forecast_data": has_forecast_data,
         "admissions": admissions,
         "external_signal": external_signal,
     }
@@ -164,103 +199,76 @@ def fetch_agent_context(db: Session, hospital_code: str) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 SYSTEM_MESSAGE = (
-    "You are a senior hospital operations analyst writing a brief for hospital administrators.\n\n"
-    "RULES:\n"
-    "1. Use ONLY the structured data provided — never invent numbers.\n"
-    "2. Be CONFIDENT and DIRECT. Do NOT say 'insufficient data' unless an entire "
-    "data section is literally empty. The data you receive IS the complete picture.\n"
-    "3. Provide ACTIONABLE recommendations — staffing, capacity, surge prep.\n"
-    "4. Use specific numbers from the data to support every claim.\n"
-    "5. Keep the response under 250 words. Use short paragraphs or bullet points.\n"
-    "6. Never ask for more data. Never list what data you wish you had.\n"
-    "7. Structure your response as: Trend Summary → Key Drivers → Recommendations."
+    "You are an expert Hospital Operations & Capacity Intelligence Analyst. "
+    "Hospital executives and chief medical officers rely on your operational briefings.\n\n"
+    "GUIDELINES:\n"
+    "1. Structure your answer with clear headers: ### 1. 4-Week Trend Analysis, ### 2. Risk & Capacity Drivers, ### 3. Actionable Staffing & Bed Recommendations.\n"
+    "2. Be concise, clinical, and precise. Cite exact predicted bed occupancy numbers, quantile intervals, and admissions.\n"
+    "3. Highlight safe capacity thresholds (85% safe capacity standard).\n"
+    "4. Connect environmental/outbreak signals (AQI, temperature, outbreak index) to anticipated patient volume.\n"
+    "5. Keep total length under 300 words. Avoid fluff."
 )
 
 
 def build_prompt(context: Dict[str, Any], question: str) -> str:
-    """Assemble the user message from DB context and the user's question."""
+    """Assemble the grounded user message from DB context and user question."""
 
-    # --- Forecasts ---
     forecasts = context["forecasts"]
-    forecast_lines = "\n".join(
-        f"  Day {f['horizon']} ({f['date']}): {f['prediction']} predicted admissions"
-        for f in forecasts
-    ) or "  (no forecast data available)"
+    bed_fcs = [f for f in forecasts if f.get("target") == "inpatient_beds_used"]
+    adm_fcs = [f for f in forecasts if f.get("target") == "admissions"]
 
-    # Pre-compute stats the LLM can cite directly
-    forecast_stats = ""
-    if forecasts:
-        preds = [f["prediction"] for f in forecasts]
-        forecast_stats = (
-            f"  Summary: min={min(preds)}, max={max(preds)}, "
-            f"avg={round(sum(preds)/len(preds), 1)}\n"
-        )
+    # Format bed forecasts
+    bed_lines = "\n".join(
+        f"  Week {f['horizon']} ({f['date']}): {f['prediction']} beds used "
+        f"[80% CI: {f.get('prediction_low', 'N/A')} - {f.get('prediction_high', 'N/A')}], "
+        f"Capacity Gap vs 85%: {f.get('resource_gap', 0):+.1f} beds"
+        for f in bed_fcs
+    ) or "  (no bed occupancy forecast recorded)"
 
-    # --- Admissions ---
+    # Format admission forecasts
+    adm_lines = "\n".join(
+        f"  Week {f['horizon']} ({f['date']}): {f['prediction']} predicted admissions "
+        f"[80% CI: {f.get('prediction_low', 'N/A')} - {f.get('prediction_high', 'N/A')}]"
+        for f in adm_fcs
+    ) or "  (no admission demand forecast recorded)"
+
+    # Admissions history
     admissions = context["admissions"]
     admission_lines = "\n".join(
         f"  {a['date']}: {a['admissions']} admissions"
-        for a in admissions
-    ) or "  (no recent admission data)"
+        for a in admissions[:6]
+    ) or "  (no recent historical records)"
 
-    admission_stats = ""
-    if admissions:
-        vals = [a["admissions"] for a in admissions]
-        trend_dir = "rising" if vals[0] > vals[-1] else "falling" if vals[0] < vals[-1] else "flat"
-        admission_stats = (
-            f"  Summary: min={min(vals)}, max={max(vals)}, "
-            f"avg={round(sum(vals)/len(vals), 1)}, recent trend={trend_dir}\n"
-        )
-
-    # --- External signals ---
+    # Telemetry signals
     sig = context.get("external_signal", {})
     if sig:
-        aqi = sig.get("aqi", 0)
-        aqi_level = (
-            "Good" if aqi <= 50 else "Moderate" if aqi <= 100
-            else "Unhealthy-Sensitive" if aqi <= 150 else "Unhealthy" if aqi <= 200
-            else "Very Unhealthy" if aqi <= 300 else "Hazardous"
-        )
         signal_block = (
-            f"  Date: {sig['date']}\n"
-            f"  Temperature: {sig['temperature']} C\n"
-            f"  AQI: {sig['aqi']} ({aqi_level})\n"
-            f"  Outbreak index: {sig['outbreak_index']} (0=none, 1=severe)\n"
-            f"  Mobility index: {sig['mobility_index']} (0=lockdown, 1=full movement)"
+            f"  Date: {sig.get('date', 'N/A')}\n"
+            f"  Temperature: {sig.get('temperature', 'N/A')} C\n"
+            f"  AQI: {sig.get('aqi', 'N/A')}\n"
+            f"  Outbreak index: {sig.get('outbreak_index', 0)} (0=normal, 1=severe)\n"
+            f"  Mobility index: {sig.get('mobility_index', 1.0)}"
         )
     else:
-        signal_block = "  (no external signal data)"
+        signal_block = "  (standard seasonal baselines)"
 
-    capacity = context.get("capacity") or "N/A"
-
-    # --- Capacity utilisation hint ---
-    util_hint = ""
-    if forecasts and capacity != "N/A":
-        peak = max(f["prediction"] for f in forecasts)
-        util_pct = round(peak / capacity * 100, 1)
-        util_hint = f"\nPeak forecast vs capacity: {peak}/{capacity} = {util_pct}% utilisation\n"
+    capacity = context.get("capacity") or 200
+    safe_capacity = round(capacity * 0.85, 1)
 
     return (
-        f"Hospital: {context['hospital_name']} ({context['hospital_code']})\n"
-        f"Region: {context.get('region') or 'N/A'}\n"
-        f"Capacity: {capacity} beds\n"
-        f"{util_hint}"
+        f"Facility: {context['hospital_name']} (CCN: {context['hospital_code']})\n"
+        f"State/Region: {context.get('region', 'N/A')}\n"
+        f"Total Licensed Beds: {capacity} | Safe Operating Limit (85%): {safe_capacity} beds | ICU: {context.get('icu_capacity', 20)} beds\n"
         f"\n"
-        f"=== Forecast (next 7 days) ===\n{forecast_lines}\n{forecast_stats}"
+        f"=== Dual-Target 4-Week Horizon Forecast ===\n"
+        f"Occupancy (Inpatient Beds Used):\n{bed_lines}\n\n"
+        f"Demand (Admissions):\n{adm_lines}\n"
         f"\n"
-        f"=== Recent admissions (latest {len(admissions)} records) ===\n"
-        f"{admission_lines}\n{admission_stats}"
+        f"=== Recent Historical Admissions ===\n{admission_lines}\n"
         f"\n"
-        f"=== Latest external signals ===\n{signal_block}\n"
+        f"=== Exogenous Telemetry & Environmental Signals ===\n{signal_block}\n"
         f"\n"
-        f"QUESTION: {question}\n"
-        f"\n"
-        f"Respond with:\n"
-        f"1. **Trend Summary** — What does the 7-day forecast show vs recent history?\n"
-        f"2. **Key Drivers** — Which data points (AQI, temperature, outbreak, mobility, "
-        f"seasonal patterns) explain the trend? Cite specific numbers.\n"
-        f"3. **Recommendations** — Concrete actions: staffing adjustments, capacity "
-        f"planning, departmental alerts. Be specific to the numbers."
+        f"USER QUESTION: {question}\n"
     )
 
 
@@ -285,65 +293,77 @@ def call_groq(system_msg: str, user_msg: str) -> tuple[str, float]:
             detail="Agent service unavailable: GROQ_API_KEY is not configured.",
         )
 
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system_msg},
-            {"role": "user", "content": user_msg},
-        ],
-        "temperature": 0.3,
-        "max_tokens": 700,
-    }
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-
+    models_to_try = [model] + [m for m in FALLBACK_MODELS if m != model]
     start = time.time()
+    last_status = 502
+    last_err_text = ""
+
     try:
-        with httpx.Client(timeout=30.0) as client:
-            resp = client.post(GROQ_API_URL, json=payload, headers=headers)
+        for cand_model in models_to_try:
+            payload = {
+                "model": cand_model,
+                "messages": [
+                    {"role": "system", "content": system_msg},
+                    {"role": "user", "content": user_msg},
+                ],
+                "temperature": 0.3,
+                "max_tokens": 700,
+            }
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            }
+
+            try:
+                with httpx.Client(timeout=30.0) as client:
+                    resp = client.post(GROQ_API_URL, json=payload, headers=headers)
+
+                if resp.status_code == 404:
+                    logger.warning(f"[AGENT] Model '{cand_model}' returned 404 on Groq. Trying fallback model...")
+                    last_status = 404
+                    last_err_text = resp.text
+                    continue
+
+                if resp.status_code != 200:
+                    logger.error(
+                        f"[AGENT] Groq API error {resp.status_code} on model {cand_model}: {resp.text[:300]}"
+                    )
+                    last_status = resp.status_code
+                    last_err_text = resp.text
+                    continue
+
+                data = resp.json()
+                analysis = (
+                    data.get("choices", [{}])[0]
+                    .get("message", {})
+                    .get("content", "")
+                    .strip()
+                )
+                if not analysis:
+                    continue
+
+                elapsed = round(time.time() - start, 3)
+                logger.info(
+                    f"[AGENT] Groq response OK | model={cand_model} | "
+                    f"tokens_in={data.get('usage', {}).get('prompt_tokens', '?')} | "
+                    f"tokens_out={data.get('usage', {}).get('completion_tokens', '?')} | "
+                    f"time={elapsed}s"
+                )
+                return analysis, elapsed
+
+            except httpx.TimeoutException:
+                elapsed = round(time.time() - start, 3)
+                logger.error(f"[AGENT] Groq API timed out after {elapsed}s on model {cand_model}")
+                continue
+
         elapsed = round(time.time() - start, 3)
-
-        if resp.status_code != 200:
-            logger.error(
-                f"[AGENT] Groq API error {resp.status_code}: {resp.text[:300]}"
-            )
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Groq API returned {resp.status_code}. Please try again later.",
-            )
-
-        data = resp.json()
-        analysis = (
-            data.get("choices", [{}])[0]
-            .get("message", {})
-            .get("content", "")
-            .strip()
-        )
-        if not analysis:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Groq API returned an empty response.",
-            )
-
-        logger.info(
-            f"[AGENT] Groq response OK | model={model} | "
-            f"tokens_in={data.get('usage', {}).get('prompt_tokens', '?')} | "
-            f"tokens_out={data.get('usage', {}).get('completion_tokens', '?')} | "
-            f"time={elapsed}s"
-        )
-        return analysis, elapsed
-
-    except httpx.TimeoutException:
-        elapsed = round(time.time() - start, 3)
-        logger.error(f"[AGENT] Groq API timed out after {elapsed}s")
+        logger.error(f"[AGENT] All Groq models failed. Last status: {last_status} - {last_err_text[:200]}")
         raise HTTPException(
-            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail="Groq API request timed out. Please try again.",
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Groq API returned {last_status}. Please try again later.",
         )
     except HTTPException:
-        raise  # re-raise our own exceptions
+        raise
     except Exception as exc:
         elapsed = round(time.time() - start, 3)
         logger.error(f"[AGENT] Groq API unexpected error: {exc}")

@@ -169,8 +169,13 @@ def create_forecasts_batch(
                 "id": uuid.uuid4(),
                 "forecast_run_id": forecast_run_id,
                 "hospital_id": hospital_map[data["hospital_id"]].id,
+                "target": data.get("target", "admissions"),
                 "horizon": data["horizon"],
                 "prediction": data["prediction"],
+                "prediction_low": data.get("prediction_low"),
+                "prediction_high": data.get("prediction_high"),
+                "resource_gap": data.get("resource_gap"),
+                "capacity_source": data.get("capacity_source"),
                 "forecast_date": data["forecast_date"],
                 "created_at": created_at,
             }
@@ -178,9 +183,13 @@ def create_forecasts_batch(
 
     insert_stmt = insert(Forecast).values(forecast_rows)
     on_conflict_stmt = insert_stmt.on_conflict_do_update(
-        index_elements=["hospital_id", "forecast_date", "horizon"],
+        index_elements=["hospital_id", "forecast_date", "horizon", "target"],
         set_={
             "prediction": insert_stmt.excluded.prediction,
+            "prediction_low": insert_stmt.excluded.prediction_low,
+            "prediction_high": insert_stmt.excluded.prediction_high,
+            "resource_gap": insert_stmt.excluded.resource_gap,
+            "capacity_source": insert_stmt.excluded.capacity_source,
             "forecast_run_id": insert_stmt.excluded.forecast_run_id,
             "created_at": insert_stmt.excluded.created_at,
         },
@@ -193,9 +202,10 @@ def get_precomputed_forecasts(
     run_id: UUID,
     hospital_ids: Optional[List[str]] = None,
     horizons: Optional[List[int]] = None,
+    target: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
-    Get forecasts from a specific run, optionally filtered by hospital/horizon.
+    Get forecasts from a specific run, optionally filtered by hospital/horizon/target.
     Returns list of dicts ready for JSON serialization.
     """
     query = (
@@ -210,15 +220,23 @@ def get_precomputed_forecasts(
     if horizons:
         query = query.filter(Forecast.horizon.in_(horizons))
 
-    query = query.order_by(Hospital.hospital_id, Forecast.horizon)
+    if target:
+        query = query.filter(Forecast.target == target)
+
+    query = query.order_by(Hospital.hospital_id, Forecast.target, Forecast.horizon)
 
     results = []
     for forecast, hosp_id in query.all():
         results.append(
             {
                 "hospital_id": hosp_id,
+                "target": forecast.target,
                 "horizon": forecast.horizon,
                 "prediction": float(forecast.prediction),
+                "prediction_low": float(forecast.prediction_low) if forecast.prediction_low is not None else None,
+                "prediction_high": float(forecast.prediction_high) if forecast.prediction_high is not None else None,
+                "resource_gap": float(forecast.resource_gap) if forecast.resource_gap is not None else None,
+                "capacity_source": forecast.capacity_source,
                 "forecast_date": str(forecast.forecast_date),
             }
         )

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, FormEvent } from "react";
+import { useState, useEffect, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion } from "framer-motion";
@@ -9,34 +9,91 @@ import { setToken, setUser } from "@/lib/auth";
 import Navbar from "@/components/layout/Navbar";
 import Logo from "@/components/ui/Logo";
 
+interface HospitalOption {
+  hospital_id: string;
+  name: string;
+  region: string;
+}
+
 export default function RegisterPage() {
   const router = useRouter();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [role, setRole] = useState<"hospital_staff" | "admin">("hospital_staff");
+  const [selectedHospital, setSelectedHospital] = useState("");
+  const [adminKey, setAdminKey] = useState("");
+  const [hospitals, setHospitals] = useState<HospitalOption[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    // Fetch available hospitals for selection
+    api
+      .get("/hospitals/public?limit=100")
+      .then((res) => {
+        const list = res.data?.hospitals || [];
+        setHospitals(list);
+        if (list.length > 0) {
+          setSelectedHospital(list[0].hospital_id);
+        }
+      })
+      .catch(() => {
+        // Fallback default
+        setSelectedHospital("050001");
+      });
+  }, []);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError("");
     setLoading(true);
 
+    if (role === "admin" && adminKey.trim() !== "HEALTHFLOW_ADMIN_2026" && adminKey.trim() !== "admin") {
+      setError("Invalid Admin Passkey. Use 'HEALTHFLOW_ADMIN_2026' or 'admin'");
+      setLoading(false);
+      return;
+    }
+
     try {
-      const res = await api.post("/auth/register", { name, email, password });
+      const payload: any = {
+        name,
+        email,
+        password,
+        role,
+      };
+
+      if (role === "hospital_staff" && selectedHospital) {
+        payload.hospital_ids = [selectedHospital];
+      }
+
+      const res = await api.post("/auth/register", payload);
       setToken(res.data.access_token);
       setUser({
         email: res.data.user.email,
         name: res.data.user.name,
         role: res.data.user.role,
+        hospital_ids: res.data.user.hospital_ids || (selectedHospital ? [selectedHospital] : []),
       });
-      router.push("/dashboard");
+
+      if (res.data.user.role === "admin") {
+        router.push("/admin");
+      } else {
+        router.push("/dashboard");
+      }
     } catch (err: unknown) {
       setError(getApiErrorMessage(err, "Registration failed. Please try again."));
     } finally {
       setLoading(false);
     }
   };
+
+  const filteredHospitals = hospitals.filter(
+    (h) =>
+      h.hospital_id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      h.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   return (
     <main className="min-h-screen bg-navy grid-overlay bg-gradient-animated">
@@ -56,7 +113,7 @@ export default function RegisterPage() {
             </div>
             <h1 className="text-2xl font-bold text-center mb-1">Create Account</h1>
             <p className="text-slate-400 text-center text-sm mb-6">
-              Start forecasting hospital admissions with AI
+              Sign up for hospital-specific forecasting or system administration
             </p>
 
             {error && (
@@ -69,6 +126,32 @@ export default function RegisterPage() {
               </motion.div>
             )}
 
+            {/* Role Selection Tabs */}
+            <div className="grid grid-cols-2 gap-2 p-1 bg-white/5 rounded-xl border border-white/10 mb-5">
+              <button
+                type="button"
+                onClick={() => setRole("hospital_staff")}
+                className={`py-2 text-xs font-semibold rounded-lg transition-all ${
+                  role === "hospital_staff"
+                    ? "bg-cyan text-navy shadow-lg"
+                    : "text-slate-400 hover:text-white"
+                }`}
+              >
+                Hospital Staff
+              </button>
+              <button
+                type="button"
+                onClick={() => setRole("admin")}
+                className={`py-2 text-xs font-semibold rounded-lg transition-all ${
+                  role === "admin"
+                    ? "bg-amber-400 text-navy shadow-lg"
+                    : "text-slate-400 hover:text-white"
+                }`}
+              >
+                Admin Access
+              </button>
+            </div>
+
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <label className="block text-xs uppercase tracking-widest text-cyan mb-2 font-medium">
@@ -80,13 +163,13 @@ export default function RegisterPage() {
                   onChange={(e) => setName(e.target.value)}
                   required
                   className="input-field"
-                  placeholder="John Doe"
+                  placeholder="Dr. Jordan Lee"
                 />
               </div>
 
               <div>
                 <label className="block text-xs uppercase tracking-widest text-cyan mb-2 font-medium">
-                  Email
+                  Work Email
                 </label>
                 <input
                   type="email"
@@ -94,7 +177,7 @@ export default function RegisterPage() {
                   onChange={(e) => setEmail(e.target.value)}
                   required
                   className="input-field"
-                  placeholder="you@example.com"
+                  placeholder={role === "admin" ? "admin@healthflow.ai" : "staff@hospital.org"}
                 />
               </div>
 
@@ -113,14 +196,78 @@ export default function RegisterPage() {
                 />
               </div>
 
-              <button type="submit" disabled={loading} className="w-full btn-primary">
+              {/* Hospital Staff Specific: Assigned Hospital Picker */}
+              {role === "hospital_staff" && (
+                <div>
+                  <label className="block text-xs uppercase tracking-widest text-cyan mb-2 font-medium">
+                    Select Your Hospital Facility
+                  </label>
+                  {hospitals.length > 0 ? (
+                    <div className="space-y-1.5">
+                      <input
+                        type="text"
+                        placeholder="Search hospital name or CCN..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="input-field !py-1.5 !text-xs !bg-navy-dark/60 mb-1"
+                      />
+                      <select
+                        value={selectedHospital}
+                        onChange={(e) => setSelectedHospital(e.target.value)}
+                        required
+                        className="input-field text-sm cursor-pointer"
+                      >
+                        {filteredHospitals.slice(0, 50).map((h) => (
+                          <option key={h.hospital_id} value={h.hospital_id} className="bg-navy text-white">
+                            {h.hospital_id} — {h.name} ({h.region})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : (
+                    <input
+                      type="text"
+                      value={selectedHospital}
+                      onChange={(e) => setSelectedHospital(e.target.value)}
+                      placeholder="e.g. 050001"
+                      className="input-field font-mono"
+                      required
+                    />
+                  )}
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Your account will be scoped exclusively to this hospital&apos;s admissions and bed forecasts.
+                  </p>
+                </div>
+              )}
+
+              {/* Admin Specific: Passkey */}
+              {role === "admin" && (
+                <div>
+                  <label className="block text-xs uppercase tracking-widest text-amber-400 mb-2 font-medium">
+                    Admin Verification Key
+                  </label>
+                  <input
+                    type="password"
+                    value={adminKey}
+                    onChange={(e) => setAdminKey(e.target.value)}
+                    required
+                    className="input-field border-amber-400/40 focus:border-amber-400"
+                    placeholder="Enter HEALTHFLOW_ADMIN_2026 or admin"
+                  />
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Passkey: <code className="text-amber-400">HEALTHFLOW_ADMIN_2026</code> or <code className="text-amber-400">admin</code>
+                  </p>
+                </div>
+              )}
+
+              <button type="submit" disabled={loading} className="w-full btn-primary mt-2">
                 {loading ? (
                   <span className="inline-flex items-center gap-2">
                     <div className="w-4 h-4 border-2 border-navy border-t-transparent rounded-full animate-spin" />
                     Creating account...
                   </span>
                 ) : (
-                  "Create Account"
+                  `Register as ${role === "admin" ? "Admin" : "Hospital Staff"}`
                 )}
               </button>
             </form>

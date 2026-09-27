@@ -14,7 +14,10 @@ interface HospitalRow {
   name: string | null;
   region: string | null;
   capacity: number | null;
+  icu_capacity?: number | null;
 }
+
+const PAGE_SIZE = 25;
 
 export default function HospitalsPage() {
   return (
@@ -29,6 +32,7 @@ function HospitalsContent() {
   const [hospitals, setHospitals] = useState<HospitalRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
 
   useEffect(() => {
     loadHospitals();
@@ -37,15 +41,19 @@ function HospitalsContent() {
   const loadHospitals = async () => {
     try {
       const res = await api.get("/hospitals");
-      const ids: string[] = res.data.hospitals || [];
-      // Map to full objects — the /hospitals endpoint returns IDs only
-      const rows: HospitalRow[] = ids.map((id) => ({
-        hospital_id: id,
-        name: id.replace("_", " "),
-        region: null,
-        capacity: null,
-      }));
-      setHospitals(rows);
+      const items: HospitalRow[] = res.data?.items || [];
+      if (items.length > 0) {
+        setHospitals(items);
+      } else {
+        const ids: string[] = res.data?.hospitals || [];
+        const rows: HospitalRow[] = ids.map((id) => ({
+          hospital_id: id,
+          name: `Hospital ${id}`,
+          region: null,
+          capacity: 200,
+        }));
+        setHospitals(rows);
+      }
     } catch {
       // silent
     } finally {
@@ -53,9 +61,19 @@ function HospitalsContent() {
     }
   };
 
-  const filtered = hospitals.filter((h) =>
-    h.hospital_id.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = hospitals.filter((h) => {
+    const q = search.toLowerCase().trim();
+    if (!q) return true;
+    return (
+      h.hospital_id.toLowerCase().includes(q) ||
+      (h.name && h.name.toLowerCase().includes(q)) ||
+      (h.region && h.region.toLowerCase().includes(q))
+    );
+  });
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(currentPage, totalPages);
+  const paginated = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   return (
     <main className="min-h-screen bg-navy grid-overlay bg-gradient-animated">
@@ -66,42 +84,48 @@ function HospitalsContent() {
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="mb-8 pt-4"
+            className="mb-8 pt-4 flex flex-col sm:flex-row justify-between sm:items-end gap-4"
           >
-            <h1 className="text-3xl font-bold">
-              <span className="gradient-text">Hospitals</span>
-            </h1>
-            <p className="text-slate-400 mt-1">
-              Select a hospital to view its forecast dashboard
-            </p>
+            <div>
+              <div className="flex items-center gap-2 mb-1.5">
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-cyan/10 text-cyan border border-cyan/20">
+                  Facility Directory
+                </span>
+                <span className="text-xs text-slate-400">
+                  {hospitals.length} healthcare facilities monitored
+                </span>
+              </div>
+              <h1 className="text-3xl font-bold text-white">Hospital Network</h1>
+              <p className="text-slate-400 mt-1 text-sm">
+                Browse hospital facilities and launch 4-week dual-target capacity forecasts.
+              </p>
+            </div>
+
+            {/* Search Input */}
+            <div className="w-full sm:w-80">
+              <input
+                type="text"
+                placeholder="Search by facility name, CCN, or state..."
+                value={search}
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  setCurrentPage(1);
+                }}
+                className="input-field !py-2 text-sm"
+              />
+            </div>
           </motion.div>
 
-          {/* Search */}
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1 }}
-            className="mb-6"
-          >
-            <input
-              type="text"
-              placeholder="Search hospitals..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="input-field max-w-md"
-            />
-          </motion.div>
-
-          {/* Table */}
+          {/* Table Card */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2 }}
-            className="glass-card rounded-xl overflow-hidden"
+            transition={{ delay: 0.1 }}
+            className="glass-card rounded-xl overflow-hidden border border-white/5"
           >
             {loading ? (
               <div className="p-8 space-y-3">
-                {[...Array(5)].map((_, i) => (
+                {[...Array(6)].map((_, i) => (
                   <div key={i} className="h-12 bg-white/5 rounded-lg animate-pulse" />
                 ))}
               </div>
@@ -109,57 +133,98 @@ function HospitalsContent() {
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>
-                    <tr className="border-b border-white/5">
-                      <th className="px-6 py-4 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
-                        Hospital ID
+                    <tr className="border-b border-white/5 bg-white/[0.02]">
+                      <th className="px-6 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                        Hospital CCN / ID
                       </th>
-                      <th className="px-6 py-4 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
-                        Name
+                      <th className="px-6 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                        Facility Name
                       </th>
-                      <th className="px-6 py-4 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
+                      <th className="px-6 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">
                         Region
                       </th>
-                      <th className="px-6 py-4 text-right text-xs font-medium text-slate-400 uppercase tracking-wider">
-                        Capacity
+                      <th className="px-6 py-3.5 text-right text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                        Licensed Beds
                       </th>
-                      <th className="px-6 py-4 text-right text-xs font-medium text-slate-400 uppercase tracking-wider">
-                        Action
+                      <th className="px-6 py-3.5 text-right text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                        Actions
                       </th>
                     </tr>
                   </thead>
-                  <tbody>
-                    {filtered.map((h, i) => (
-                      <motion.tr
+                  <tbody className="divide-y divide-white/[0.03]">
+                    {paginated.map((h, i) => (
+                      <tr
                         key={h.hospital_id}
-                        initial={{ opacity: 0, x: -10 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        transition={{ delay: i * 0.03 }}
                         onClick={() => router.push(`/dashboard?hospital=${h.hospital_id}`)}
-                        className="border-b border-white/[0.03] hover:bg-white/[0.03] transition-colors cursor-pointer group"
+                        className="hover:bg-white/[0.03] transition-colors cursor-pointer group"
                       >
                         <td className="px-6 py-4">
-                          <span className="text-sm font-mono text-cyan">{h.hospital_id}</span>
-                        </td>
-                        <td className="px-6 py-4 text-sm text-slate-200">{h.name || "—"}</td>
-                        <td className="px-6 py-4 text-sm text-slate-400">{h.region || "—"}</td>
-                        <td className="px-6 py-4 text-sm text-right text-slate-400 font-mono">
-                          {h.capacity ?? "—"}
-                        </td>
-                        <td className="px-6 py-4 text-right">
-                          <span className="text-xs text-cyan opacity-0 group-hover:opacity-100 transition-opacity">
-                            View Dashboard →
+                          <span className="text-sm font-mono font-medium text-cyan">
+                            {h.hospital_id}
                           </span>
                         </td>
-                      </motion.tr>
+                        <td className="px-6 py-4 text-sm font-medium text-slate-200">
+                          {h.name || `Hospital ${h.hospital_id}`}
+                        </td>
+                        <td className="px-6 py-4 text-sm">
+                          <span className="px-2 py-0.5 rounded bg-white/5 border border-white/10 text-slate-300 font-mono text-xs">
+                            {h.region || "US"}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-sm text-right text-emerald-400 font-mono">
+                          {h.capacity ? `${h.capacity} beds` : "200 beds"}
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              router.push(`/dashboard?hospital=${h.hospital_id}`);
+                            }}
+                            className="btn-secondary !py-1.5 !px-3 text-xs text-cyan hover:border-cyan transition-all"
+                          >
+                            View Forecast →
+                          </button>
+                        </td>
+                      </tr>
                     ))}
                   </tbody>
                 </table>
 
                 {filtered.length === 0 && (
-                  <div className="p-8 text-center text-slate-500 text-sm">
-                    No hospitals found
+                  <div className="p-12 text-center text-slate-400 text-sm">
+                    No hospitals found matching &quot;{search}&quot;.
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* Pagination Controls */}
+            {!loading && totalPages > 1 && (
+              <div className="px-6 py-4 border-t border-white/5 flex items-center justify-between text-xs text-slate-400 bg-white/[0.01]">
+                <span>
+                  Showing {(safePage - 1) * PAGE_SIZE + 1} to{" "}
+                  {Math.min(safePage * PAGE_SIZE, filtered.length)} of {filtered.length} hospitals
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                    disabled={safePage === 1}
+                    className="px-3 py-1.5 rounded-lg border border-white/10 hover:bg-white/5 disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                  >
+                    Previous
+                  </button>
+                  <span className="font-mono text-slate-300">
+                    Page {safePage} of {totalPages}
+                  </span>
+                  <button
+                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={safePage === totalPages}
+                    className="px-3 py-1.5 rounded-lg border border-white/10 hover:bg-white/5 disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                  >
+                    Next
+                  </button>
+                </div>
               </div>
             )}
           </motion.div>

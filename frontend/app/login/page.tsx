@@ -28,13 +28,24 @@ export default function LoginPage() {
         email: res.data.user.email,
         name: res.data.user.name,
         role: res.data.user.role,
+        hospital_ids: res.data.user.hospital_ids || [],
       });
-      router.push("/dashboard");
+      if (res.data.user.role === "admin") {
+        router.push("/admin");
+      } else {
+        router.push("/dashboard");
+      }
     } catch (err: unknown) {
       setError(getApiErrorMessage(err, "Login failed. Please try again."));
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleQuickLogin = (demoEmail: string, demoPass: string) => {
+    setEmail(demoEmail);
+    setPassword(demoPass);
+    setError("");
   };
 
   return (
@@ -58,6 +69,29 @@ export default function LoginPage() {
             <p className="text-slate-400 text-center text-sm mb-6">
               Sign in to access your forecasting dashboard
             </p>
+
+            {/* Quick Demo Fill Buttons */}
+            <div className="mb-6 p-3 bg-white/5 rounded-xl border border-white/10 space-y-2">
+              <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                Quick Demo Credentials:
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleQuickLogin("test_admin_v2@healthflow.ai", "AdminPass123!")}
+                  className="px-2.5 py-1.5 text-xs font-medium rounded bg-amber-400/10 hover:bg-amber-400/20 text-amber-400 border border-amber-400/30 transition-colors text-center"
+                >
+                  Admin Demo
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleQuickLogin("staff@healthflow.ai", "StaffPass123!")}
+                  className="px-2.5 py-1.5 text-xs font-medium rounded bg-cyan/10 hover:bg-cyan/20 text-cyan border border-cyan/30 transition-colors text-center"
+                >
+                  Staff Demo
+                </button>
+              </div>
+            </div>
 
             {error && (
               <motion.div
